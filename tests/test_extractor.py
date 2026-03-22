@@ -139,6 +139,18 @@ class ExtractorTests(unittest.TestCase):
             "DevOps Roadmap\nGoal: Strong system + automation basics",
         )
 
+    def test_normalize_scene_text_for_output_removes_generic_image_description_variants(self) -> None:
+        text = (
+            "## DevOps Roadmap\n"
+            "The image displays a promotional graphic for a course titled COMPLETE DEVOPS.\n"
+            "The image features a dark rectangular panel with a grid background.\n"
+            "Goal: Strong system + automation basics\n"
+        )
+        self.assertEqual(
+            _normalize_scene_text_for_output(text),
+            "DevOps Roadmap\nGoal: Strong system + automation basics",
+        )
+
     def test_looks_like_marketing_endcard_detects_noisy_course_card(self) -> None:
         self.assertTrue(
             _looks_like_marketing_endcard(
