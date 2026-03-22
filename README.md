@@ -1,11 +1,12 @@
-# Instagram Content Extractor
+# Social Content Extractor
 
-A Python CLI tool that turns public Instagram posts and reels into reusable text for notes, docs, and LLM workflows.
+A CLI tool that turns public Instagram posts, Instagram reels, and YouTube Shorts into reusable text for notes, docs, and LLM workflows.
 
 It helps you:
 - download media from public Instagram posts and reels
+- download media from public YouTube Shorts
 - extract captions, hashtags, mentions, and visible on-screen text
-- OCR carousel slides and reel scenes automatically
+- OCR carousel slides and short-form video scenes automatically
 - save everything in a clean folder structure
 - prepare extracted content for notes, docs, or LLM workflows
 
@@ -28,7 +29,7 @@ The manual workflow usually looks like this:
 
 That is exactly the repetitive work this tool removes.
 
-You give it an Instagram post or reel URL, and it handles the rest:
+You give it an Instagram post, Instagram reel, or YouTube Shorts URL, and it handles the rest:
 - downloads the media for you
 - extracts visible text from slides or reel scenes
 - captures caption, hashtags, and mentions
@@ -38,38 +39,111 @@ In short: give it a URL, and it gives you the content back in a usable form.
 
 ## Quick Start
 
+## First Run
+
+Clone the repo:
+
+```bash
+git clone git@github.com:shaikahmadnawaz/social-content-extractor.git
+cd social-content-extractor
+```
+
+Create and activate a virtual environment:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m ensurepip --upgrade
+```
+
+Install the package:
+
+```bash
+python -m pip install -e .
+```
+
+Install local OCR/video dependencies:
+
+```bash
+brew install tesseract
+brew install ffmpeg
+```
+
+Verify the CLI:
+
+```bash
+social-content-extractor --help
+```
+
+Run your first extraction:
+
+```bash
+social-content-extractor "https://www.instagram.com/p/DVqbs3Qjifn/" --sarvam
+```
+
 Install dependencies:
 
 ```bash
-pip install -r requirements.txt
+pip install -e .
 brew install tesseract
 brew install ffmpeg
+```
+
+If you prefer not to install the package in editable mode, use:
+
+```bash
+PYTHONPATH=src python -m social_content_extractor --help
 ```
 
 Run it on a post:
 
 ```bash
-python main.py "https://www.instagram.com/p/DVqbs3Qjifn/" --sarvam
+social-content-extractor "https://www.instagram.com/p/DVqbs3Qjifn" --sarvam
 ```
 
 Run it on a reel:
 
 ```bash
-python main.py "https://www.instagram.com/reel/DTTBJSgE6pP/" --sarvam
+social-content-extractor "https://www.instagram.com/reel/DTTBJSgE6pP" --sarvam
+```
+
+Run it on a YouTube Short:
+
+```bash
+social-content-extractor "https://www.youtube.com/shorts/Lay3pQF3I3c" --sarvam
 ```
 
 Output will be saved under:
 
 ```text
-downloads/posts/<shortcode>/
-downloads/reels/<shortcode>/
+downloads/instagram/posts/<shortcode>/
+downloads/instagram/reels/<shortcode>/
+downloads/youtube/shorts/<video_id>/
 ```
 
 If you want pure local OCR only:
 
 ```bash
-python main.py "https://www.instagram.com/p/DVqbs3Qjifn/" --local
-python main.py "https://www.instagram.com/reel/DTTBJSgE6pP/" --local
+social-content-extractor "https://www.instagram.com/p/DVqbs3Qjifn" --local
+social-content-extractor "https://www.instagram.com/reel/DTTBJSgE6pP" --local
+social-content-extractor "https://www.youtube.com/shorts/Lay3pQF3I3c" --local
+```
+
+## Project Structure
+
+The project now keeps the application code under `src/social_content_extractor/`:
+
+```text
+src/social_content_extractor/
+  __init__.py
+  __main__.py
+  cli.py
+  extractor/
+    __init__.py
+    constants.py
+    core.py
+    sources.py
+    text.py
 ```
 
 ## Which Mode Should You Use?
@@ -78,10 +152,13 @@ If you just want the safest starting point, use these commands:
 
 ```bash
 # Recommended default for posts/carousels
-python main.py "https://www.instagram.com/p/DVqbs3Qjifn/" --sarvam
+social-content-extractor "https://www.instagram.com/p/DVqbs3Qjifn" --sarvam
 
 # Recommended default for reels
-python main.py "https://www.instagram.com/reel/DTTBJSgE6pP/" --sarvam
+social-content-extractor "https://www.instagram.com/reel/DTTBJSgE6pP" --sarvam
+
+# Recommended default for YouTube Shorts
+social-content-extractor "https://www.youtube.com/shorts/Lay3pQF3I3c" --sarvam
 ```
 
 When to use each mode:
@@ -92,6 +169,7 @@ When to use each mode:
 Practical recommendation:
 - for posts and carousels, start with `--sarvam`
 - for reels, start with `--sarvam`
+- for YouTube Shorts, start with `--sarvam`
 - use `--local` when you want the simplest OCR path
 - use `--sarvam-vision` mainly when you want to compare Vision OCR quality on posts
 
@@ -99,7 +177,7 @@ Practical recommendation:
 
 These are real example inputs and terminal outputs from actual runs of the tool.
 
-The post output is shortened in the middle for readability because the full carousel OCR spans 12 slides. The reel output is included in full because it is much shorter.
+The Instagram post output is shortened in the middle for readability because the full carousel OCR spans 12 slides. The reel and YouTube Short outputs are included as practical excerpts.
 
 ### Example post
 
@@ -112,7 +190,7 @@ Input:
 Command:
 
 ```bash
-python main.py "https://www.instagram.com/p/DVqbs3Qjifn/" --sarvam
+social-content-extractor "https://www.instagram.com/p/DVqbs3Qjifn" --sarvam
 ```
 
 Terminal output excerpt:
@@ -120,31 +198,32 @@ Terminal output excerpt:
 ```text
 Extracting content + running local OCR + Sarvam cleanup...
 JSON Query to graphql/query: 403 Forbidden when accessing https://www.instagram.com/graphql/query [retrying; skip with ^C]
-downloads/posts/DVqbs3Qjifn/media/DVqbs3Qjifn_1.jpg downloads/posts/DVqbs3Qjifn/media/DVqbs3Qjifn_2.jpg downloads/posts/DVqbs3Qjifn/media/DVqbs3Qjifn_3.jpg downloads/posts/DVqbs3Qjifn/media/DVqbs3Qjifn_4.jpg downloads/posts/DVqbs3Qjifn/media/DVqbs3Qjifn_5.jpg downloads/posts/DVqbs3Qjifn/media/DVqbs3Qjifn_6.jpg downloads/posts/DVqbs3Qjifn/media/DVqbs3Qjifn_7.jpg downloads/posts/DVqbs3Qjifn/media/DVqbs3Qjifn_8.jpg downloads/posts/DVqbs3Qjifn/media/DVqbs3Qjifn_9.jpg downloads/posts/DVqbs3Qjifn/media/DVqbs3Qjifn_10.jpg downloads/posts/DVqbs3Qjifn/media/DVqbs3Qjifn_11.jpg downloads/posts/DVqbs3Qjifn/media/DVqbs3Qjifn_12.jpg
+downloads/instagram/posts/DVqbs3Qjifn/media/DVqbs3Qjifn_1.jpg downloads/instagram/posts/DVqbs3Qjifn/media/DVqbs3Qjifn_2.jpg downloads/instagram/posts/DVqbs3Qjifn/media/DVqbs3Qjifn_3.jpg downloads/instagram/posts/DVqbs3Qjifn/media/DVqbs3Qjifn_4.jpg downloads/instagram/posts/DVqbs3Qjifn/media/DVqbs3Qjifn_5.jpg downloads/instagram/posts/DVqbs3Qjifn/media/DVqbs3Qjifn_6.jpg downloads/instagram/posts/DVqbs3Qjifn/media/DVqbs3Qjifn_7.jpg downloads/instagram/posts/DVqbs3Qjifn/media/DVqbs3Qjifn_8.jpg downloads/instagram/posts/DVqbs3Qjifn/media/DVqbs3Qjifn_9.jpg downloads/instagram/posts/DVqbs3Qjifn/media/DVqbs3Qjifn_10.jpg downloads/instagram/posts/DVqbs3Qjifn/media/DVqbs3Qjifn_11.jpg downloads/instagram/posts/DVqbs3Qjifn/media/DVqbs3Qjifn_12.jpg
 
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║ Instagram Content Extractor                                                  ║
+║ Social Content Extractor                                                     ║
 ║ https://www.instagram.com/p/DVqbs3Qjifn/                                     ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
                      Post Info
 ╭───────────────────┬─────────────────────────────╮
+│  Platform         │  Instagram                  │
 │  Owner            │  @clouddevopsengineer       │
 │  Type             │  CAROUSEL                   │
 │  Date (UTC)       │  2026-03-09T12:04:08        │
 │  Date (Local)     │  2026-03-09T17:34:08+05:30  │
-│  Likes            │  923                        │
+│  Likes            │  926                        │
 │  Comments         │  22                         │
 │  Media Count      │  12                         │
 ╰───────────────────┴─────────────────────────────╯
 ╭─ Caption ────────────────────────────────────────────────────────────────────╮
 │ 100 Real-World Kubernetes Use Cases 🚀                                       │
 │                                                                              │
-│ Kubernetes isn’t just about containers — it powers modern cloud             │
+│ Kubernetes isn’t just about containers — it powers modern cloud              │
 │ infrastructure.                                                              │
 │                                                                              │
-│ From microservices and CI/CD pipelines to AI model serving, service meshes, │
-│ security policies, and multi-cloud deployments, Kubernetes runs the         │
-│ backbone of today’s scalable systems.                                        │
+│ From microservices and CI/CD pipelines to AI model serving, service meshes,  │
+│ security policies, and multi-cloud deployments, Kubernetes runs the backbone │
+│ of today’s scalable systems.                                                 │
 ╰──────────────────────────────────────────────────────────────────────────────╯
              Media Summary
 ╭──────┬──────────┬────────────────────╮
@@ -195,7 +274,7 @@ downloads/posts/DVqbs3Qjifn/media/DVqbs3Qjifn_1.jpg downloads/posts/DVqbs3Qjifn/
 
 Downloaded media: 12 file(s)
 OCR text saved to:
-downloads/posts/DVqbs3Qjifn/content/DVqbs3Qjifn.sarvam.ocr.txt
+downloads/instagram/posts/DVqbs3Qjifn/content/DVqbs3Qjifn.sarvam.ocr.txt
 ```
 
 ### Example reel
@@ -209,7 +288,7 @@ Input:
 Command:
 
 ```bash
-python main.py "https://www.instagram.com/reel/DTTBJSgE6pP/" --sarvam
+social-content-extractor "https://www.instagram.com/reel/DTTBJSgE6pP" --sarvam
 ```
 
 Terminal output:
@@ -217,20 +296,21 @@ Terminal output:
 ```text
 Extracting content + running local OCR + Sarvam cleanup...
 JSON Query to graphql/query: 403 Forbidden when accessing https://www.instagram.com/graphql/query [retrying; skip with ^C]
-downloads/reels/DTTBJSgE6pP/media/DTTBJSgE6pP_1.mp4
+downloads/instagram/reels/DTTBJSgE6pP/media/DTTBJSgE6pP_1.mp4
 
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║ Instagram Content Extractor                                                  ║
+║ Social Content Extractor                                                     ║
 ║ https://www.instagram.com/reel/DTTBJSgE6pP/                                  ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
                      Post Info
 ╭───────────────────┬─────────────────────────────╮
+│  Platform         │  Instagram                  │
 │  Owner            │  @amanrahangdale_2108       │
 │  Type             │  VIDEO                      │
 │  Date (UTC)       │  2026-01-09T16:48:26        │
 │  Date (Local)     │  2026-01-09T22:18:26+05:30  │
 │  Likes            │  -1                         │
-│  Comments         │  2781                       │
+│  Comments         │  2783                       │
 │  Media Count      │  1                          │
 ╰───────────────────┴─────────────────────────────╯
 ╭─ Caption ────────────────────────────────────────────────────────────────────╮
@@ -249,7 +329,7 @@ downloads/reels/DTTBJSgE6pP/media/DTTBJSgE6pP_1.mp4
 │  1   │  VIDEO   │ DTTBJSgE6pP_1.mp4 │
 ╰──────┴──────────┴───────────────────╯
 
-╭─ Slide 1 - Reel OCR Scenes ──────────────────────────────────────────────────╮
+╭─ Slide 1 - Video OCR Scenes ─────────────────────────────────────────────────╮
 │ 00:02                                                                        │
 │ DevOps                                                                       │
 │ Roadmap                                                                      │
@@ -308,7 +388,82 @@ downloads/reels/DTTBJSgE6pP/media/DTTBJSgE6pP_1.mp4
 
 Downloaded media: 1 file(s)
 OCR text saved to:
-downloads/reels/DTTBJSgE6pP/content/DTTBJSgE6pP.sarvam.ocr.txt
+downloads/instagram/reels/DTTBJSgE6pP/content/DTTBJSgE6pP.sarvam.ocr.txt
+```
+
+### Example YouTube Short
+
+Input URL:
+
+```text
+https://www.youtube.com/shorts/Lay3pQF3I3c
+```
+
+Command:
+
+```bash
+social-content-extractor "https://www.youtube.com/shorts/Lay3pQF3I3c" --sarvam
+```
+
+Terminal output excerpt:
+
+```text
+Extracting content + running local OCR + Sarvam cleanup...
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ Social Content Extractor                                                     ║
+║ https://www.youtube.com/shorts/Lay3pQF3I3c                                   ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+                      Post Info
+╭───────────────────┬────────────────────────────────╮
+│  Platform         │  Youtube                       │
+│  Owner            │  @bashopsOfficial              │
+│  Title            │  DevOps Roadmap Beginners♾️🚀  │
+│  Type             │  VIDEO                         │
+│  Date (UTC)       │  2024-09-26T06:29:23+00:00     │
+│  Likes            │  12205                         │
+│  Comments         │  155                           │
+│  Media Count      │  1                             │
+╰───────────────────┴────────────────────────────────╯
+╭─ Caption ────────────────────────────────────────────────────────────────────╮
+│ DevOps Roadmap Beginners♾️🚀                                                 │
+│                                                                              │
+│ DevOps RoadMap,Learn DevOps from the scratch to advanced level.              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+             Media Summary
+╭──────┬──────────┬───────────────────╮
+│  #   │   Type   │ Saved As          │
+├──────┼──────────┼───────────────────┤
+│  1   │  VIDEO   │ Lay3pQF3I3c_1.mp4 │
+╰──────┴──────────┴───────────────────╯
+
+╭─ Slide 1 - Video OCR Scenes ─────────────────────────────────────────────────╮
+│ 00:00                                                                        │
+│ Python < — - Programming Language                                            │
+│ V                                                                            │
+│ Linux <— — -  Operating System                                               │
+│ AWS                                                                          │
+│ v                                                                            │
+│ Cloud Providers                                                              │
+│ Git <— — Codtrol System                                                      │
+│ “Docker                                                                      │
+│ DRIVING DEVOPS Containers —                                                  │
+│ Jenkins <- -                                                                 │
+│ Gitiab CI — -@ CICD                                                          │
+│ GitHub Action                                                                │
+│                                                                              │
+│ infra Provisioning» —> Terraform                                             │
+│                                                                              │
+│ Ansible < — — —- Configuration Management                                    │
+│ Orchestration Platform — Kubernetes                                          │
+│ Prometheus iq Docker Swarm                                                   │
+│ Grafana 7 v                                                                  │
+│ Infra Monitoring                                                             │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+Downloaded media: 1 file(s)
+OCR text saved to:
+downloads/youtube/shorts/Lay3pQF3I3c/content/Lay3pQF3I3c.sarvam.ocr.txt
 ```
 
 ## What You Get
@@ -326,18 +481,19 @@ After a run, you get:
 
 The extraction flow is:
 
-1. Parse the Instagram URL and detect whether it is a post or a reel.
-2. Extract the shortcode from the URL.
-3. Fetch Instagram metadata with Instaloader.
-4. Preserve the original media kind in the saved URL, such as `/p/` or `/reel/`.
-5. Download media into the post-specific or reel-specific `media/` folder.
-6. Reuse cached media if a valid copy already exists locally.
-7. Optionally run OCR depending on the selected mode.
-8. Save OCR and JSON artifacts into the `content/` folder.
+1. Parse the input URL and detect the platform and media type.
+2. Extract the platform-specific content ID.
+3. Fetch metadata from the platform adapter:
+   - Instagram uses `Instaloader`
+   - YouTube Shorts uses `yt-dlp`
+4. Download media into the platform-first output structure.
+5. Reuse cached media if a valid copy already exists locally.
+6. Optionally run OCR depending on the selected mode.
+7. Save OCR and JSON artifacts into the item's `content/` folder.
 
 ## Content Source Handling
 
-Instagram content is not always text-on-image first.
+Short-form social content is not always text-on-image first.
 
 Sometimes:
 - the media is only representational and the real message is in the caption
@@ -383,7 +539,7 @@ Local OCR plus Sarvam cleanup.
 Behavior:
 - OCR is done locally with `Tesseract`
 - text cleanup and sentence formatting are done with Sarvam chat
-- this is currently the safest Sarvam-backed mode for reels
+- this is currently the safest Sarvam-backed mode for reels and Shorts
 
 ### `--sarvam-vision`
 
@@ -400,7 +556,7 @@ Behavior:
 Install Python dependencies:
 
 ```bash
-pip install -r requirements.txt
+pip install -e .
 ```
 
 Install local OCR dependencies:
@@ -413,7 +569,7 @@ brew install ffmpeg
 Install Sarvam SDK if you want Sarvam-backed modes:
 
 ```bash
-uv pip install --python .venv/bin/python sarvamai
+python -m pip install sarvamai
 ```
 
 Set your API key:
@@ -435,51 +591,54 @@ SARVAM_API_KEY=your-key-here
 ### Basic extraction
 
 ```bash
-python main.py "https://www.instagram.com/p/DVqbs3Qjifn/"
-python main.py "https://www.instagram.com/reel/DTTBJSgE6pP/"
+social-content-extractor "https://www.instagram.com/p/DVqbs3Qjifn/"
+social-content-extractor "https://www.instagram.com/reel/DTTBJSgE6pP/"
+social-content-extractor "https://www.youtube.com/shorts/Lay3pQF3I3c"
 ```
 
 ### OCR modes
 
 ```bash
 # Pure local OCR
-python main.py "https://www.instagram.com/p/DVqbs3Qjifn/" --local
+social-content-extractor "https://www.instagram.com/p/DVqbs3Qjifn/" --local
 
 # Local OCR + Sarvam cleanup
-python main.py "https://www.instagram.com/p/DVqbs3Qjifn/" --sarvam
-python main.py "https://www.instagram.com/reel/DTTBJSgE6pP/" --sarvam
+social-content-extractor "https://www.instagram.com/p/DVqbs3Qjifn/" --sarvam
+social-content-extractor "https://www.instagram.com/reel/DTTBJSgE6pP/" --sarvam
+social-content-extractor "https://www.youtube.com/shorts/Lay3pQF3I3c" --sarvam
 
 # Sarvam Vision OCR + Sarvam cleanup
 # Best used for posts/carousels when you want to compare Vision OCR quality
-python main.py "https://www.instagram.com/p/DVqbs3Qjifn/" --sarvam-vision
+social-content-extractor "https://www.instagram.com/p/DVqbs3Qjifn/" --sarvam-vision
 ```
 
-For reels, prefer:
+For reels and Shorts, prefer:
 
 ```bash
-python main.py "https://www.instagram.com/reel/DTTBJSgE6pP/" --sarvam
+social-content-extractor "https://www.instagram.com/reel/DTTBJSgE6pP/" --sarvam
+social-content-extractor "https://www.youtube.com/shorts/Lay3pQF3I3c" --sarvam
 ```
 
-`--sarvam-vision` on reels is still experimental and may produce noisy scene text.
+`--sarvam-vision` on reels and Shorts is still experimental and may produce noisy scene text.
 
 ### JSON output
 
 ```bash
-python main.py "https://www.instagram.com/p/DVqbs3Qjifn/" --local --json
-python main.py "https://www.instagram.com/p/DVqbs3Qjifn/" --sarvam --json
+social-content-extractor "https://www.instagram.com/p/DVqbs3Qjifn/" --local --json
+social-content-extractor "https://www.instagram.com/p/DVqbs3Qjifn/" --sarvam --json
 ```
 
 ### OCR tuning
 
 ```bash
-python main.py "https://www.instagram.com/p/DVqbs3Qjifn/" --local --ocr-psm 6 --ocr-min-confidence 35
+social-content-extractor "https://www.instagram.com/p/DVqbs3Qjifn/" --local --ocr-psm 6 --ocr-min-confidence 35
 ```
 
 ### Sarvam cleanup model override
 
 ```bash
-python main.py "https://www.instagram.com/reel/DTTBJSgE6pP/" --sarvam --sarvam-model sarvam-30b
-python main.py "https://www.instagram.com/p/DVqbs3Qjifn/" --sarvam-vision --sarvam-model sarvam-105b
+social-content-extractor "https://www.instagram.com/reel/DTTBJSgE6pP/" --sarvam --sarvam-model sarvam-30b
+social-content-extractor "https://www.instagram.com/p/DVqbs3Qjifn/" --sarvam-vision --sarvam-model sarvam-105b
 ```
 
 ### Accessibility caption
@@ -489,7 +648,7 @@ Instagram accessibility captions are hidden by default because they are often no
 Show them only when needed:
 
 ```bash
-python main.py "https://www.instagram.com/p/DVqbs3Qjifn/" --show-accessibility
+social-content-extractor "https://www.instagram.com/p/DVqbs3Qjifn/" --show-accessibility
 ```
 
 ## Common Flags
@@ -510,35 +669,45 @@ Compatibility note:
 
 ## Output Layout
 
-The tool now segregates posts and reels and separates raw assets from extracted content.
+The tool now uses a platform-first directory layout and separates raw assets from extracted content.
 
-The folder name uses the Instagram `shortcode`, for example:
-- post: `DVqbs3Qjifn`
-- reel: `DTTBJSgE6pP`
+The folder name uses the platform-specific content ID, for example:
+- Instagram post: `DVqbs3Qjifn`
+- Instagram reel: `DTTBJSgE6pP`
+- YouTube Short: `Lay3pQF3I3c`
 
 ```text
 downloads/
-  posts/
-    DVqbs3Qjifn/
-      media/
-        DVqbs3Qjifn_1.jpg
-        DVqbs3Qjifn_2.jpg
-      content/
-        DVqbs3Qjifn.local.ocr.txt
-        DVqbs3Qjifn.local.json
-  reels/
-    DTTBJSgE6pP/
-      media/
-        DTTBJSgE6pP_1.mp4
-      content/
-        DTTBJSgE6pP.sarvam.ocr.txt
+  instagram/
+    posts/
+      DVqbs3Qjifn/
+        media/
+          DVqbs3Qjifn_1.jpg
+          DVqbs3Qjifn_2.jpg
+        content/
+          DVqbs3Qjifn.local.ocr.txt
+          DVqbs3Qjifn.local.json
+    reels/
+      DTTBJSgE6pP/
+        media/
+          DTTBJSgE6pP_1.mp4
+        content/
+          DTTBJSgE6pP.sarvam.ocr.txt
+  youtube/
+    shorts/
+      Lay3pQF3I3c/
+        media/
+          Lay3pQF3I3c_1.mp4
+        content/
+          Lay3pQF3I3c.sarvam.ocr.txt
 ```
 
 Folder rules:
-- posts go under `downloads/posts/<shortcode>/`
-- reels go under `downloads/reels/<shortcode>/`
-- media files go under `<shortcode>/media/`
-- OCR text and JSON files go under `<shortcode>/content/`
+- posts go under `downloads/instagram/posts/<shortcode>/`
+- reels go under `downloads/instagram/reels/<shortcode>/`
+- YouTube Shorts go under `downloads/youtube/shorts/<video_id>/`
+- media files go under `<content-id>/media/`
+- OCR text and JSON files go under `<content-id>/content/`
 
 Mode-aware artifact naming:
 - local OCR: `<shortcode>.local.ocr.txt`
