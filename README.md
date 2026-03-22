@@ -181,7 +181,7 @@ python main.py "https://www.instagram.com/p/DVVXez5Ctc3/" --local --ocr-psm 6 --
 
 ```bash
 python main.py "https://www.instagram.com/reel/DTTBJSgE6pP/" --sarvam --sarvam-model sarvam-30b
-python main.py "https://www.instagram.com/reel/DTTBJSgE6pP/" --sarvam-vision --sarvam-model sarvam-105b
+python main.py "https://www.instagram.com/p/DVVXez5Ctc3/" --sarvam-vision --sarvam-model sarvam-105b
 ```
 
 ### Accessibility caption
