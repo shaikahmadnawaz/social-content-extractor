@@ -9,6 +9,9 @@ from PIL import Image
 
 from extractor import (
     _build_canonical_instagram_url,
+    _build_content_output_dir,
+    _build_media_output_dir,
+    _build_output_artifact_stem,
     _clean_video_scene_records_with_sarvam,
     _deduplicate_scene_records,
     _ensure_ffmpeg_available,
@@ -24,6 +27,8 @@ from extractor import (
     _looks_like_marketing_endcard,
     _normalize_scene_text_for_output,
     _normalize_ocr_line,
+    _ocr_images_with_sarvam,
+    _ocr_images_with_sarvam_vision,
     _ocr_video_slide,
     _resolve_sarvam_chat_model,
     _should_keep_video_scene,
@@ -52,6 +57,20 @@ class ExtractorTests(unittest.TestCase):
             _build_canonical_instagram_url("tv", "ABC123"),
             "https://www.instagram.com/tv/ABC123/",
         )
+
+    def test_build_output_artifact_stem_uses_mode_suffixes(self) -> None:
+        self.assertEqual(_build_output_artifact_stem("ABC123", None), "ABC123")
+        self.assertEqual(_build_output_artifact_stem("ABC123", "tesseract"), "ABC123.local")
+        self.assertEqual(_build_output_artifact_stem("ABC123", "sarvam"), "ABC123.sarvam")
+        self.assertEqual(
+            _build_output_artifact_stem("ABC123", "sarvam_vision"),
+            "ABC123.sarvam-vision",
+        )
+
+    def test_build_media_and_content_output_dirs_use_post_subfolders(self) -> None:
+        post_dir = "/tmp/downloads/ABC123"
+        self.assertEqual(_build_media_output_dir(post_dir), "/tmp/downloads/ABC123/media")
+        self.assertEqual(_build_content_output_dir(post_dir), "/tmp/downloads/ABC123/content")
 
     def test_get_env_value_reads_from_dotenv_file(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -108,6 +127,18 @@ class ExtractorTests(unittest.TestCase):
             ),
         )
 
+    def test_normalize_scene_text_for_output_removes_embedded_image_markdown_and_descriptions(self) -> None:
+        text = (
+            "DevOps Roadmap\n"
+            "![Image](data:image/jpeg;base64,abc123)\n"
+            "The image is a black-and-white silhouette illustration of a plant structure.\n"
+            "Goal: Strong system + automation basics\n"
+        )
+        self.assertEqual(
+            _normalize_scene_text_for_output(text),
+            "DevOps Roadmap\nGoal: Strong system + automation basics",
+        )
+
     def test_looks_like_marketing_endcard_detects_noisy_course_card(self) -> None:
         self.assertTrue(
             _looks_like_marketing_endcard(
@@ -126,6 +157,67 @@ class ExtractorTests(unittest.TestCase):
             _resolve_sarvam_chat_model("auto", [{"type": "video"}]),
             "sarvam-30b",
         )
+
+    @patch("extractor._clean_single_ocr_text_with_sarvam", return_value="clean text")
+    @patch("extractor._run_best_ocr")
+    @patch("extractor._load_ocr_image")
+    @patch("extractor._create_sarvam_client")
+    def test_ocr_images_with_sarvam_uses_local_ocr_for_images(
+        self,
+        _mock_client,
+        mock_load_image,
+        mock_run_best_ocr,
+        _mock_clean,
+    ) -> None:
+        mock_load_image.return_value = (Image.new("RGB", (32, 32), color="white"), "downloaded_image")
+        mock_run_best_ocr.return_value = {
+            "text": "raw text",
+            "lines": ["raw text"],
+            "confidence": 91.2,
+            "word_count": 2,
+            "line_count": 1,
+            "variant": "enhanced",
+        }
+
+        results, cleanup_model = _ocr_images_with_sarvam(
+            slides=[{"index": 1, "type": "image", "url": "https://cdn.example/image.jpg"}],
+            requested_chat_model="auto",
+            ocr_lang="eng",
+            ocr_psm=6,
+            ocr_min_confidence=30.0,
+        )
+
+        self.assertEqual(cleanup_model, "sarvam-30b")
+        self.assertEqual(results[0]["text"], "clean text")
+        self.assertEqual(results[0]["confidence"], 91.2)
+        self.assertEqual(results[0]["variant"], "enhanced_sarvam_cleanup")
+        self.assertEqual(results[0]["ocr_source"], "downloaded_image+sarvam-30b")
+
+    @patch("extractor._clean_single_ocr_text_with_sarvam", return_value="clean vision text")
+    @patch("extractor._run_sarvam_vision_on_file", return_value="raw vision text")
+    @patch("extractor._ensure_local_image_path")
+    @patch("extractor._create_sarvam_client")
+    def test_ocr_images_with_sarvam_vision_uses_vision_for_images(
+        self,
+        _mock_client,
+        mock_local_path,
+        _mock_vision,
+        _mock_clean,
+    ) -> None:
+        mock_local_path.return_value = ("/tmp/slide.jpg", None)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            results, cleanup_model = _ocr_images_with_sarvam_vision(
+                slides=[{"index": 1, "type": "image", "url": "https://cdn.example/image.jpg"}],
+                output_dir=temp_dir,
+                requested_chat_model="auto",
+                sarvam_language="en-IN",
+            )
+
+        self.assertEqual(cleanup_model, "sarvam-30b")
+        self.assertEqual(results[0]["text"], "clean vision text")
+        self.assertEqual(results[0]["variant"], "sarvam_vision_cleanup")
+        self.assertEqual(results[0]["ocr_source"], "sarvam_vision+sarvam-30b")
 
     def test_normalize_ocr_line_collapses_whitespace(self) -> None:
         self.assertEqual(
@@ -340,6 +432,44 @@ class ExtractorTests(unittest.TestCase):
 
     @patch("extractor._fetch_post")
     @patch("extractor._create_loader")
+    @patch("extractor._download_media")
+    def test_extract_post_places_downloaded_media_in_media_subfolder(
+        self,
+        mock_download_media,
+        _,
+        mock_fetch_post,
+    ) -> None:
+        mock_fetch_post.return_value = SimpleNamespace(
+            typename="GraphImage",
+            is_video=False,
+            owner_username="creator",
+            owner_id="123",
+            caption="caption",
+            accessibility_caption=None,
+            caption_hashtags=(),
+            caption_mentions=(),
+            date_utc=datetime(2026, 1, 9, 16, 48, 26, tzinfo=timezone.utc),
+            date_local=datetime(2026, 1, 9, 22, 18, 26, tzinfo=timezone.utc),
+            likes=42,
+            comments=5,
+            url="https://cdn.example/image.jpg",
+        )
+        mock_download_media.return_value = {
+            1: "/tmp/downloads/DVVXez5Ctc3/media/DVVXez5Ctc3_1.jpg",
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data = extract_post(
+                "https://www.instagram.com/p/DVVXez5Ctc3/",
+                download_media=True,
+                output_dir=temp_dir,
+                ocr=False,
+            )
+
+        self.assertTrue(data["downloaded_files"][0].endswith("media/DVVXez5Ctc3_1.jpg"))
+
+    @patch("extractor._fetch_post")
+    @patch("extractor._create_loader")
     def test_extract_post_preserves_reel_url_kind(self, _, mock_fetch_post) -> None:
         mock_fetch_post.return_value = SimpleNamespace(
             typename="GraphVideo",
@@ -421,6 +551,264 @@ class ExtractorTests(unittest.TestCase):
         self.assertEqual(data["ocr_provider"], "sarvam")
         self.assertEqual(data["ocr_cleanup_model"], "sarvam-30b")
         mock_sarvam_ocr.assert_called_once()
+
+    @patch("extractor._fetch_post")
+    @patch("extractor._create_loader")
+    @patch("extractor._ocr_images_with_sarvam_vision")
+    def test_extract_post_uses_sarvam_vision_provider_when_requested(
+        self,
+        mock_sarvam_vision_ocr,
+        _,
+        mock_fetch_post,
+    ) -> None:
+        mock_fetch_post.return_value = SimpleNamespace(
+            typename="GraphImage",
+            is_video=False,
+            owner_username="creator",
+            owner_id="123",
+            caption="caption",
+            accessibility_caption=None,
+            caption_hashtags=(),
+            caption_mentions=(),
+            date_utc=datetime(2026, 1, 9, 16, 48, 26, tzinfo=timezone.utc),
+            date_local=datetime(2026, 1, 9, 22, 18, 26, tzinfo=timezone.utc),
+            likes=42,
+            comments=5,
+            url="https://cdn.example/image.jpg",
+        )
+        mock_sarvam_vision_ocr.return_value = (
+            [
+                {
+                    "slide": 1,
+                    "text": "clean vision text",
+                    "lines": ["clean vision text"],
+                    "confidence": 0.0,
+                    "word_count": 3,
+                    "line_count": 1,
+                    "variant": "sarvam_vision_cleanup",
+                    "media_type": "image",
+                    "timestamp": None,
+                    "ocr_source": "sarvam_vision+sarvam-30b",
+                }
+            ],
+            "sarvam-30b",
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data = extract_post(
+                "https://www.instagram.com/p/DVVXez5Ctc3/",
+                download_media=False,
+                output_dir=temp_dir,
+                ocr=True,
+                ocr_provider="sarvam_vision",
+            )
+
+        self.assertEqual(data["ocr_provider"], "sarvam_vision")
+        self.assertEqual(data["ocr_cleanup_model"], "sarvam-30b")
+        mock_sarvam_vision_ocr.assert_called_once()
+
+    @patch("extractor._fetch_post")
+    @patch("extractor._create_loader")
+    @patch("extractor._ocr_images")
+    def test_extract_post_saves_local_mode_ocr_and_json_with_mode_suffix(
+        self,
+        mock_local_ocr,
+        _,
+        mock_fetch_post,
+    ) -> None:
+        mock_fetch_post.return_value = SimpleNamespace(
+            typename="GraphImage",
+            is_video=False,
+            owner_username="creator",
+            owner_id="123",
+            caption="caption",
+            accessibility_caption=None,
+            caption_hashtags=(),
+            caption_mentions=(),
+            date_utc=datetime(2026, 1, 9, 16, 48, 26, tzinfo=timezone.utc),
+            date_local=datetime(2026, 1, 9, 22, 18, 26, tzinfo=timezone.utc),
+            likes=42,
+            comments=5,
+            url="https://cdn.example/image.jpg",
+        )
+        mock_local_ocr.return_value = [
+            {
+                "slide": 1,
+                "text": "local text",
+                "lines": ["local text"],
+                "confidence": 90.0,
+                "word_count": 2,
+                "line_count": 1,
+                "variant": "enhanced",
+                "media_type": "image",
+                "timestamp": None,
+                "ocr_source": "downloaded_image",
+            }
+        ]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data = extract_post(
+                "https://www.instagram.com/p/DVVXez5Ctc3/",
+                download_media=False,
+                output_dir=temp_dir,
+                ocr=True,
+                save_json=True,
+                ocr_provider="tesseract",
+            )
+
+            self.assertTrue(data["ocr_text_file"].endswith("content/DVVXez5Ctc3.local.ocr.txt"))
+            self.assertTrue(data["json_file"].endswith("content/DVVXez5Ctc3.local.json"))
+            self.assertTrue(os.path.exists(data["ocr_text_file"]))
+            self.assertTrue(os.path.exists(data["json_file"]))
+
+    @patch("extractor._fetch_post")
+    @patch("extractor._create_loader")
+    @patch("extractor._ocr_images_with_sarvam")
+    def test_extract_post_saves_sarvam_mode_ocr_and_json_with_mode_suffix(
+        self,
+        mock_sarvam_ocr,
+        _,
+        mock_fetch_post,
+    ) -> None:
+        mock_fetch_post.return_value = SimpleNamespace(
+            typename="GraphImage",
+            is_video=False,
+            owner_username="creator",
+            owner_id="123",
+            caption="caption",
+            accessibility_caption=None,
+            caption_hashtags=(),
+            caption_mentions=(),
+            date_utc=datetime(2026, 1, 9, 16, 48, 26, tzinfo=timezone.utc),
+            date_local=datetime(2026, 1, 9, 22, 18, 26, tzinfo=timezone.utc),
+            likes=42,
+            comments=5,
+            url="https://cdn.example/image.jpg",
+        )
+        mock_sarvam_ocr.return_value = (
+            [
+                {
+                    "slide": 1,
+                    "text": "sarvam text",
+                    "lines": ["sarvam text"],
+                    "confidence": 90.0,
+                    "word_count": 2,
+                    "line_count": 1,
+                    "variant": "enhanced_sarvam_cleanup",
+                    "media_type": "image",
+                    "timestamp": None,
+                    "ocr_source": "downloaded_image+sarvam-30b",
+                }
+            ],
+            "sarvam-30b",
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data = extract_post(
+                "https://www.instagram.com/p/DVVXez5Ctc3/",
+                download_media=False,
+                output_dir=temp_dir,
+                ocr=True,
+                save_json=True,
+                ocr_provider="sarvam",
+            )
+
+            self.assertTrue(data["ocr_text_file"].endswith("content/DVVXez5Ctc3.sarvam.ocr.txt"))
+            self.assertTrue(data["json_file"].endswith("content/DVVXez5Ctc3.sarvam.json"))
+            self.assertTrue(os.path.exists(data["ocr_text_file"]))
+            self.assertTrue(os.path.exists(data["json_file"]))
+
+    @patch("extractor._fetch_post")
+    @patch("extractor._create_loader")
+    @patch("extractor._ocr_images_with_sarvam_vision")
+    def test_extract_post_saves_sarvam_vision_mode_ocr_and_json_with_mode_suffix(
+        self,
+        mock_sarvam_vision_ocr,
+        _,
+        mock_fetch_post,
+    ) -> None:
+        mock_fetch_post.return_value = SimpleNamespace(
+            typename="GraphImage",
+            is_video=False,
+            owner_username="creator",
+            owner_id="123",
+            caption="caption",
+            accessibility_caption=None,
+            caption_hashtags=(),
+            caption_mentions=(),
+            date_utc=datetime(2026, 1, 9, 16, 48, 26, tzinfo=timezone.utc),
+            date_local=datetime(2026, 1, 9, 22, 18, 26, tzinfo=timezone.utc),
+            likes=42,
+            comments=5,
+            url="https://cdn.example/image.jpg",
+        )
+        mock_sarvam_vision_ocr.return_value = (
+            [
+                {
+                    "slide": 1,
+                    "text": "vision text",
+                    "lines": ["vision text"],
+                    "confidence": 0.0,
+                    "word_count": 2,
+                    "line_count": 1,
+                    "variant": "sarvam_vision_cleanup",
+                    "media_type": "image",
+                    "timestamp": None,
+                    "ocr_source": "sarvam_vision+sarvam-30b",
+                }
+            ],
+            "sarvam-30b",
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data = extract_post(
+                "https://www.instagram.com/p/DVVXez5Ctc3/",
+                download_media=False,
+                output_dir=temp_dir,
+                ocr=True,
+                save_json=True,
+                ocr_provider="sarvam_vision",
+            )
+
+            self.assertTrue(data["ocr_text_file"].endswith("content/DVVXez5Ctc3.sarvam-vision.ocr.txt"))
+            self.assertTrue(data["json_file"].endswith("content/DVVXez5Ctc3.sarvam-vision.json"))
+            self.assertTrue(os.path.exists(data["ocr_text_file"]))
+            self.assertTrue(os.path.exists(data["json_file"]))
+
+    @patch("extractor._fetch_post")
+    @patch("extractor._create_loader")
+    def test_extract_post_saves_json_without_ocr_in_content_subfolder(
+        self,
+        _,
+        mock_fetch_post,
+    ) -> None:
+        mock_fetch_post.return_value = SimpleNamespace(
+            typename="GraphImage",
+            is_video=False,
+            owner_username="creator",
+            owner_id="123",
+            caption="caption",
+            accessibility_caption=None,
+            caption_hashtags=(),
+            caption_mentions=(),
+            date_utc=datetime(2026, 1, 9, 16, 48, 26, tzinfo=timezone.utc),
+            date_local=datetime(2026, 1, 9, 22, 18, 26, tzinfo=timezone.utc),
+            likes=42,
+            comments=5,
+            url="https://cdn.example/image.jpg",
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data = extract_post(
+                "https://www.instagram.com/p/DVVXez5Ctc3/",
+                download_media=False,
+                output_dir=temp_dir,
+                ocr=False,
+                save_json=True,
+            )
+
+            self.assertTrue(data["json_file"].endswith("content/DVVXez5Ctc3.json"))
+            self.assertTrue(os.path.exists(data["json_file"]))
 
     def test_clean_video_scene_records_with_sarvam_drops_noise(self) -> None:
         client = SimpleNamespace(
