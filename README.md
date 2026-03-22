@@ -1,139 +1,366 @@
 # Instagram Content Extractor
 
-A Python CLI tool to extract content from Instagram posts, including carousel slides with OCR-ready text extraction.
+A Python CLI tool for extracting content from public Instagram posts and reels.
 
-## What it extracts
+It supports:
+- metadata extraction
+- caption, hashtags, and mentions
+- media download
+- OCR from carousel slides and reels
+- multiple OCR pipelines for local and Sarvam-based processing
 
-- Post metadata: owner, timestamps, likes, comments, post type
-- Caption content: full caption, hashtags, mentions
-- Media assets: all image/video URLs plus optional local downloads
-- OCR content: text detected on each image slide and timestamped text scenes from reels/videos
-- Accessibility caption: Instagram's own alt/accessibility text when available
+## Current Status
+
+The project currently supports:
+- Instagram `/p/` posts and carousels
+- Instagram `/reel/` reels
+- canonical URL preservation in output
+- cached media reuse
+- segregated output folders for posts vs reels
+- separate `media/` and `content/` folders per shortcode
+- mode-aware OCR artifact filenames
+- local OCR with Tesseract
+- local OCR plus Sarvam cleanup
+- Sarvam Vision OCR plus Sarvam cleanup
+
+The item identifier used in folders is the Instagram `shortcode`, for example:
+- post: `DVVXez5Ctc3`
+- reel: `DTTBJSgE6pP`
+
+## How It Works
+
+The extraction flow is:
+
+1. Parse the Instagram URL and detect whether it is a post or a reel.
+2. Extract the shortcode from the URL.
+3. Fetch Instagram metadata with Instaloader.
+4. Preserve the original media kind in the saved URL, such as `/p/` or `/reel/`.
+5. Download media into the post-specific or reel-specific `media/` folder.
+6. Reuse cached media if a valid copy already exists locally.
+7. Optionally run OCR depending on the selected mode.
+8. Save OCR and JSON artifacts into the `content/` folder.
+
+## What It Extracts
+
+- Post metadata: owner, timestamps, likes, comments, type
+- Caption text
+- Hashtags
+- Mentions
+- Downloaded image/video files
+- OCR text for slides and reel scenes
+- Accessibility caption from Instagram when explicitly requested
+
+## Supported OCR Modes
+
+### `--local`
+
+Pure local OCR.
+
+Behavior:
+- uses `Tesseract` only
+- does not use Sarvam anywhere
+- best when you want a simple offline-ish OCR path after media download
+
+### `--sarvam`
+
+Local OCR plus Sarvam cleanup.
+
+Behavior:
+- OCR is done locally with `Tesseract`
+- text cleanup and sentence formatting are done with Sarvam chat
+- this is currently the safest Sarvam-backed mode for reels
+
+### `--sarvam-vision`
+
+Sarvam Vision OCR plus Sarvam cleanup.
+
+Behavior:
+- OCR is done by Sarvam Vision
+- cleanup and sentence formatting are done with Sarvam chat
+- useful for some posts/carousels
+- currently less reliable for reels because provider-generated image-description text can still leak through
+
+## Recommended Usage
+
+### For posts and carousels
+
+Recommended order to try:
+- `--local`
+- `--sarvam`
+- `--sarvam-vision` when you specifically want to compare Vision OCR quality
+
+### For reels
+
+Recommended order to try:
+- `--sarvam`
+- `--local`
+
+`--sarvam-vision` for reels is still experimental and may produce noisy scene text.
 
 ## Setup
+
+Install Python dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-If you want OCR, install Tesseract and ffmpeg:
+Install local OCR dependencies:
 
 ```bash
 brew install tesseract
 brew install ffmpeg
 ```
 
-If you want Sarvam-powered cleanup on top of local OCR, install the SDK and export your API key:
+Install Sarvam SDK if you want Sarvam-backed modes:
 
 ```bash
 uv pip install --python .venv/bin/python sarvamai
+```
+
+Set your API key:
+
+```bash
 export SARVAM_API_KEY="your-key-here"
 ```
 
-## Usage
+The extractor also reads `SARVAM_API_KEY` from a local `.env` file.
 
-```bash
-# Extract metadata + media
-python main.py "https://www.instagram.com/p/DVVXez5Ctc3/"
+Example `.env`:
 
-# Extract a reel
-python main.py "https://www.instagram.com/reel/DTTBJSgE6pP/"
-
-# Extract metadata + local Tesseract OCR from all image slides
-# This creates one OCR text file
-python main.py "https://www.instagram.com/p/DVVXez5Ctc3/" --local
-
-# Extract using local Tesseract OCR + Sarvam 30b cleanup
-python main.py "https://www.instagram.com/reel/DTTBJSgE6pP/" --sarvam
-
-# Extract using Sarvam Vision OCR + Sarvam 30b cleanup
-python main.py "https://www.instagram.com/p/DVVXez5Ctc3/" --sarvam-vision
-
-# Extract a reel with Sarvam Vision OCR + Sarvam 30b cleanup
-python main.py "https://www.instagram.com/reel/DTTBJSgE6pP/" --sarvam-vision
-
-# Force the higher-quality cleanup model for difficult reels
-python main.py "https://www.instagram.com/reel/DTTBJSgE6pP/" --sarvam-vision --sarvam-model sarvam-105b
-
-# Local OCR with custom tuning
-python main.py "https://www.instagram.com/p/DVVXez5Ctc3/" --local --ocr-psm 6 --ocr-min-confidence 35
-
-# Save JSON too
-python main.py "https://www.instagram.com/p/DVVXez5Ctc3/" --local --json
+```env
+SARVAM_API_KEY=your-key-here
 ```
 
-## Output
+## CLI Usage
 
-The tool creates a folder per Instagram post inside the base output directory:
+### Basic extraction
+
+```bash
+python main.py "https://www.instagram.com/p/DVVXez5Ctc3/"
+python main.py "https://www.instagram.com/reel/DTTBJSgE6pP/"
+```
+
+### OCR modes
+
+```bash
+# Pure local OCR
+python main.py "https://www.instagram.com/p/DVVXez5Ctc3/" --local
+
+# Local OCR + Sarvam cleanup
+python main.py "https://www.instagram.com/p/DVVXez5Ctc3/" --sarvam
+python main.py "https://www.instagram.com/reel/DTTBJSgE6pP/" --sarvam
+
+# Sarvam Vision OCR + Sarvam cleanup
+python main.py "https://www.instagram.com/p/DVVXez5Ctc3/" --sarvam-vision
+python main.py "https://www.instagram.com/reel/DTTBJSgE6pP/" --sarvam-vision
+```
+
+### JSON output
+
+```bash
+python main.py "https://www.instagram.com/p/DVVXez5Ctc3/" --local --json
+python main.py "https://www.instagram.com/p/DVVXez5Ctc3/" --sarvam --json
+```
+
+### OCR tuning
+
+```bash
+python main.py "https://www.instagram.com/p/DVVXez5Ctc3/" --local --ocr-psm 6 --ocr-min-confidence 35
+```
+
+### Sarvam cleanup model override
+
+```bash
+python main.py "https://www.instagram.com/reel/DTTBJSgE6pP/" --sarvam --sarvam-model sarvam-30b
+python main.py "https://www.instagram.com/reel/DTTBJSgE6pP/" --sarvam-vision --sarvam-model sarvam-105b
+```
+
+### Accessibility caption
+
+Instagram accessibility captions are hidden by default because they are often noisy autogenerated summaries.
+
+Show them only when needed:
+
+```bash
+python main.py "https://www.instagram.com/p/DVVXez5Ctc3/" --show-accessibility
+```
+
+## Important Flags
+
+- `--local`: use pure Tesseract OCR
+- `--sarvam`: use Tesseract OCR plus Sarvam cleanup
+- `--sarvam-vision`: use Sarvam Vision OCR plus Sarvam cleanup
+- `--sarvam-model`: choose `sarvam-30b` or `sarvam-105b` for cleanup
+- `--ocr-lang`: Tesseract language code
+- `--ocr-psm`: Tesseract page segmentation mode
+- `--ocr-min-confidence`: minimum Tesseract word confidence
+- `--json`: save JSON output
+- `--show-accessibility`: show Instagram accessibility caption
+- `--no-download`: skip media download when OCR is not requested
+
+Note:
+- `--ocr` is kept as a hidden compatibility alias for `--local`
+
+## Output Layout
+
+The tool now segregates posts and reels and separates raw assets from extracted content.
 
 ```text
 downloads/
-  DVVXez5Ctc3/
-    media/
-      DVVXez5Ctc3_1.jpg
-      DVVXez5Ctc3_2.jpg
-    content/
-      DVVXez5Ctc3.local.ocr.txt
-      DVVXez5Ctc3.local.json
+  posts/
+    DVVXez5Ctc3/
+      media/
+        DVVXez5Ctc3_1.jpg
+        DVVXez5Ctc3_2.jpg
+      content/
+        DVVXez5Ctc3.local.ocr.txt
+        DVVXez5Ctc3.local.json
+  reels/
+    DTTBJSgE6pP/
+      media/
+        DTTBJSgE6pP_1.mp4
+      content/
+        DTTBJSgE6pP.sarvam.ocr.txt
 ```
 
-Output rules:
+Folder rules:
+- posts go under `downloads/posts/<shortcode>/`
+- reels go under `downloads/reels/<shortcode>/`
+- media files go under `<shortcode>/media/`
+- OCR text and JSON files go under `<shortcode>/content/`
 
-- Downloaded media assets are saved under `<shortcode>/media/`
-- OCR and JSON artifacts are saved under `<shortcode>/content/`
-- `--local`: saves mode-aware files like `content/<shortcode>.local.ocr.txt` and `content/<shortcode>.local.json`
-- `--sarvam`: saves mode-aware files like `content/<shortcode>.sarvam.ocr.txt` and `content/<shortcode>.sarvam.json`
-- `--sarvam-vision`: saves mode-aware files like `content/<shortcode>.sarvam-vision.ocr.txt` and `content/<shortcode>.sarvam-vision.json`
-- `--json` without OCR still saves `content/<shortcode>.json`
+Mode-aware artifact naming:
+- local OCR: `<shortcode>.local.ocr.txt`
+- local OCR + Sarvam cleanup: `<shortcode>.sarvam.ocr.txt`
+- Sarvam Vision + cleanup: `<shortcode>.sarvam-vision.ocr.txt`
+- JSON-only without OCR: `<shortcode>.json`
 
-For reels/videos, OCR output is grouped by timestamp in playback order:
+## Caching and Download Reuse
 
-```text
-00:00
-Extracted text
+Downloaded media is not fetched again if a valid local copy already exists.
 
-00:03
-Next scene text
-```
+Current cache behavior:
+- images are reused only if they can be opened and verified as real images
+- videos are reused only if they look like valid MP4 files
+- if `ffprobe` is available, cached videos are also validated for:
+  - positive duration
+  - a real video stream
 
-The JSON now includes:
+If a cached file is broken or invalid:
+- it is deleted
+- the extractor downloads a fresh copy
 
-- `media`: raw media items from Instagram
-- `slides`: per-slide objects with `file_path` and OCR results
-- `ocr_text`: OCR result objects with `slide`, `media_type`, `timestamp`, `text`, `lines`, `confidence`, `variant`, `ocr_source`
-- `ocr_combined_text`: one merged text blob for downstream use
+## OCR Behavior
 
-URL behavior:
+### Posts and carousels
 
-- The saved `url` field preserves the original Instagram media type: `/p/`, `/reel/`, or `/tv/`
-- Reel and TV links are not rewritten to `/p/` in JSON output
+- image slides are OCRed one by one
+- results are stored per slide
+- combined text is also saved into one `.ocr.txt` file
 
-Cached media behavior:
+### Reels
 
-- Image cache entries are verified as real images before reuse
-- Video cache entries are checked for a valid MP4 signature before reuse
-- If `ffprobe` is available, cached videos are also validated for a real video stream and positive duration
+- reels are processed as sampled video scenes
+- timestamps are formatted in playback order
+- repeated scenes are deduplicated
+- if local frame OCR fails, thumbnail OCR is used as fallback
 
-Sarvam OCR behavior:
+## Sarvam Cleanup Behavior
 
-- `--sarvam` uses local OCR first and then a Sarvam chat model for cleanup
-- Model selection is automatic by default: `sarvam-30b` for image/carousel cleanup and `sarvam-105b` for reels/videos
-- You can override cleanup selection with `--sarvam-model sarvam-30b` or `--sarvam-model sarvam-105b`
+Sarvam cleanup is designed to:
+- preserve meaning and order
+- remove obvious OCR junk
+- normalize formatting
+- avoid inventing missing text
+
+Additional safety behavior:
+- reasoning-style responses are ignored
+- markdown fences are stripped
+- generic provider artifacts like embedded `data:image/...` payloads are filtered
+- generic image-description prose such as `The image is ...` is filtered
+
+What we intentionally avoid:
+- content-specific hardcoded rewrites
+- reel-specific phrase hacks
+- post-specific text replacements
+
+## JSON Structure
+
+The saved JSON includes:
+- `shortcode`
+- `url`
+- `post_type`
+- `owner`
+- `caption`
+- `accessibility_caption`
+- `hashtags`
+- `mentions`
+- `date`
+- `date_local`
+- `likes`
+- `comments_count`
+- `media_count`
+- `media`
+- `slides`
+- `downloaded_files`
+- `ocr_text`
+- `ocr_combined_text`
+- `ocr_provider`
+- `ocr_cleanup_model` when applicable
+- `ocr_text_file` when OCR is enabled
+- `json_file` when JSON output is enabled
+
+## URL Behavior
+
+The saved `url` preserves the original Instagram media type:
+- `/p/` stays `/p/`
+- `/reel/` stays `/reel/`
+
+This matters because posts and reels are saved into different output buckets.
+
+## Current Tradeoffs and Practical Guidance
+
+What is working well:
+- posts and carousels with local OCR
+- reels with local OCR plus Sarvam cleanup
+- cached media reuse
+- clean output folder segregation
+
+What is still imperfect:
+- Sarvam Vision on reels can still be noisy
+- stylized or low-contrast visuals remain challenging for any OCR provider
+- anonymous Instagram requests may still occasionally hit `403` or rate limits
+
+Practical recommendation:
+- use `--local` when you want pure Tesseract
+- use `--sarvam` as the main upgraded mode
+- use `--sarvam-vision` mainly for comparison on posts/carousels
 
 ## Testing
 
-Run the test suite with either of these commands:
+Run tests with either:
 
 ```bash
 python3 -m unittest -v
 ./.venv/bin/python -m unittest discover -s tests -v
 ```
 
+The test suite currently covers:
+- URL parsing
+- canonical URL preservation
+- cache validation
+- OCR mode selection
+- Sarvam cleanup behavior
+- output layout
+- mode-aware filenames
+- post vs reel folder segregation
+- content vs media folder segregation
+
 ## Notes
 
-- Works best for public posts
-- Supports `/p/`, `/reel/`, and `/tv/` URLs
-- Instagram may intermittently return `403` or rate-limit anonymous requests
-- Reel/video OCR samples frames from downloaded video (default every `1s`, and `0.5s` for short reels), then deduplicates repeated scenes
-- If frame OCR fails for a video slide, OCR falls back to the thumbnail image
-- OCR is strongest on text-heavy slides like educational carousels and weaker on stylized or low-contrast imagery
+- works best for public Instagram content
+- supports `/p/` and `/reel/` workflows in practice
+- `/tv/` parsing still exists in code, but the main organization/documentation now focuses on posts and reels
+- accessibility caption is Instagram metadata, not our OCR result
+- OCR quality is best on educational slides with large readable text
