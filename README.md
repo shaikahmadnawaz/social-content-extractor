@@ -152,9 +152,17 @@ python main.py "https://www.instagram.com/p/DVVXez5Ctc3/" --sarvam
 python main.py "https://www.instagram.com/reel/DTTBJSgE6pP/" --sarvam
 
 # Sarvam Vision OCR + Sarvam cleanup
+# Best used for posts/carousels when you want to compare Vision OCR quality
 python main.py "https://www.instagram.com/p/DVVXez5Ctc3/" --sarvam-vision
-python main.py "https://www.instagram.com/reel/DTTBJSgE6pP/" --sarvam-vision
 ```
+
+For reels, prefer:
+
+```bash
+python main.py "https://www.instagram.com/reel/DTTBJSgE6pP/" --sarvam
+```
+
+`--sarvam-vision` on reels is still experimental and may produce noisy scene text.
 
 ### JSON output
 
