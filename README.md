@@ -3,6 +3,7 @@
 A CLI tool that turns public Instagram posts, Instagram reels, and YouTube Shorts into reusable text for notes, docs, and LLM workflows.
 
 It helps you:
+
 - download media from public Instagram posts and reels
 - download media from public YouTube Shorts
 - extract captions, hashtags, mentions, and visible on-screen text
@@ -17,11 +18,13 @@ If you've ever tried to turn useful Instagram content into notes, docs, or LLM-r
 One image is manageable. You can take a screenshot, run OCR, and copy the text.
 
 But the process gets annoying very quickly when:
+
 - the useful content is spread across a 10-slide or 20-slide carousel
 - the real content is inside a reel and you have to pause frame by frame
 - the caption contains part of the message and the media contains the rest
 
 The manual workflow usually looks like this:
+
 - take screenshots one by one
 - open Google Lens or another OCR tool
 - copy the text manually
@@ -30,6 +33,7 @@ The manual workflow usually looks like this:
 That is exactly the repetitive work this tool removes.
 
 You give it an Instagram post, Instagram reel, or YouTube Shorts URL, and it handles the rest:
+
 - downloads the media for you
 - extracts visible text from slides or reel scenes
 - captures caption, hashtags, and mentions
@@ -162,11 +166,13 @@ social-content-extractor "https://www.youtube.com/shorts/Lay3pQF3I3c" --sarvam
 ```
 
 When to use each mode:
+
 - `--local`: pure Tesseract OCR, no Sarvam involved anywhere
 - `--sarvam`: local OCR plus Sarvam cleanup, best overall default
 - `--sarvam-vision`: Sarvam Vision OCR plus Sarvam cleanup, useful mainly for comparing results on posts/carousels
 
 Practical recommendation:
+
 - for posts and carousels, start with `--sarvam`
 - for reels, start with `--sarvam`
 - for YouTube Shorts, start with `--sarvam`
@@ -475,6 +481,7 @@ downloads/youtube/shorts/Lay3pQF3I3c/content/Lay3pQF3I3c.sarvam.ocr.txt
 ## What You Get
 
 After a run, you get:
+
 - post metadata such as owner, type, timestamps, likes, and comments
 - caption text
 - hashtags and mentions
@@ -502,6 +509,7 @@ The extraction flow is:
 Short-form social content is not always text-on-image first.
 
 Sometimes:
+
 - the media is only representational and the real message is in the caption
 - the caption is promotional and the real message is inside the slides or reel frames
 - both sources matter
@@ -509,11 +517,13 @@ Sometimes:
 To handle that, the extractor does not merge caption and OCR blindly.
 
 Instead, it keeps them separate and adds a lightweight decision layer:
+
 - `content_strategy`
 - `primary_source`
 - `primary_text`
 
 Current strategy values:
+
 - `caption_only`
 - `ocr_only`
 - `caption_plus_ocr`
@@ -521,6 +531,7 @@ Current strategy values:
 - `none`
 
 How it behaves:
+
 - if caption is substantial and OCR is weak, it prefers the caption
 - if OCR is substantial and caption is weak or mostly promotional, it prefers OCR
 - if both are meaningful, it keeps both and marks the result as `caption_plus_ocr`
@@ -534,6 +545,7 @@ This keeps the raw data intact while still giving you a practical default.
 Pure local OCR.
 
 Behavior:
+
 - uses `Tesseract` only
 - does not use Sarvam anywhere
 - best when you want the simplest OCR path
@@ -543,6 +555,7 @@ Behavior:
 Local OCR plus Sarvam cleanup.
 
 Behavior:
+
 - OCR is done locally with `Tesseract`
 - text cleanup and sentence formatting are done with Sarvam chat
 - this is currently the safest Sarvam-backed mode for reels and Shorts
@@ -552,6 +565,7 @@ Behavior:
 Sarvam Vision OCR plus Sarvam cleanup.
 
 Behavior:
+
 - OCR is done by Sarvam Vision
 - cleanup and sentence formatting are done with Sarvam chat
 - useful for some posts and carousels
@@ -561,12 +575,15 @@ Behavior:
 
 Based on the current pricing shared for this project:
 
-| Service | Usage in this tool | Pricing |
-| --- | --- | --- |
-| Sarvam 30B | chat cleanup / sentence formatting | Free |
-| Sarvam Vision | image OCR / vision extraction | `₹1.5` per page |
+| Service       | Usage in this tool                 | Pricing         |
+| ------------- | ---------------------------------- | --------------- |
+| Sarvam 30B    | chat cleanup / sentence formatting | Free            |
+| Sarvam Vision | image OCR / vision extraction      | `₹1.5` per page |
 
 Practical takeaway:
+
+- `--sarvam` uses local OCR plus Sarvam chat cleanup, so it is the cheaper default
+- `--sarvam-vision` invokes Sarvam Vision OCR, so use it when you specifically want to compare vision-based extraction quality
 
 ## Setup
 
@@ -682,6 +699,7 @@ social-content-extractor "https://www.instagram.com/p/DVqbs3Qjifn/" --show-acces
 - `--no-download`: skip media download when OCR is not requested
 
 Compatibility note:
+
 - `--ocr` is kept as a hidden compatibility alias for `--local`
 
 ## Output Layout
@@ -689,6 +707,7 @@ Compatibility note:
 The tool now uses a platform-first directory layout and separates raw assets from extracted content.
 
 The folder name uses the platform-specific content ID, for example:
+
 - Instagram post: `DVqbs3Qjifn`
 - Instagram reel: `DTTBJSgE6pP`
 - YouTube Short: `Lay3pQF3I3c`
@@ -720,6 +739,7 @@ downloads/
 ```
 
 Folder rules:
+
 - posts go under `downloads/instagram/posts/<shortcode>/`
 - reels go under `downloads/instagram/reels/<shortcode>/`
 - YouTube Shorts go under `downloads/youtube/shorts/<video_id>/`
@@ -727,6 +747,7 @@ Folder rules:
 - OCR text and JSON files go under `<content-id>/content/`
 
 Mode-aware artifact naming:
+
 - local OCR: `<shortcode>.local.ocr.txt`
 - local OCR + Sarvam cleanup: `<shortcode>.sarvam.ocr.txt`
 - Sarvam Vision + cleanup: `<shortcode>.sarvam-vision.ocr.txt`
@@ -737,6 +758,7 @@ Mode-aware artifact naming:
 Downloaded media is not fetched again if a valid local copy already exists.
 
 Current cache behavior:
+
 - images are reused only if they can be opened and verified as real images
 - videos are reused only if they look like valid MP4 files
 - if `ffprobe` is available, cached videos are also validated for:
@@ -744,6 +766,7 @@ Current cache behavior:
   - a real video stream
 
 If a cached file is broken or invalid:
+
 - it is deleted
 - the extractor downloads a fresh copy
 
@@ -765,18 +788,21 @@ If a cached file is broken or invalid:
 ## Sarvam Cleanup Behavior
 
 Sarvam cleanup is designed to:
+
 - preserve meaning and order
 - remove obvious OCR junk
 - normalize formatting
 - avoid inventing missing text
 
 Additional safety behavior:
+
 - reasoning-style responses are ignored
 - markdown fences are stripped
 - generic provider artifacts like embedded `data:image/...` payloads are filtered
 - generic image-description prose such as `The image is ...` is filtered
 
 What we intentionally avoid:
+
 - content-specific hardcoded rewrites
 - reel-specific phrase hacks
 - post-specific text replacements
@@ -784,6 +810,7 @@ What we intentionally avoid:
 ## JSON Structure
 
 The saved JSON includes:
+
 - `shortcode`
 - `url`
 - `post_type`
@@ -823,6 +850,7 @@ Example:
 ## URL Behavior
 
 The saved `url` preserves the original Instagram media type:
+
 - `/p/` stays `/p/`
 - `/reel/` stays `/reel/`
 
@@ -831,17 +859,20 @@ This matters because posts and reels are saved into different output buckets.
 ## Current Limitations
 
 What is working well:
+
 - posts and carousels with local OCR
 - reels with local OCR plus Sarvam cleanup
 - cached media reuse
 - clean output folder segregation
 
 What is still imperfect:
+
 - Sarvam Vision on reels can still be noisy
 - stylized or low-contrast visuals remain challenging for any OCR provider
 - anonymous Instagram requests may still occasionally hit `403` or rate limits
 
 Practical recommendation:
+
 - use `--local` when you want pure Tesseract
 - use `--sarvam` as the main upgraded mode
 - use `--sarvam-vision` mainly for comparison on posts/carousels
@@ -856,6 +887,7 @@ python3 -m unittest -v
 ```
 
 The test suite currently covers:
+
 - URL parsing
 - canonical URL preservation
 - cache validation
