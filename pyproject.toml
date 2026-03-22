@@ -1,7 +1,11 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "insta-content-extractor"
+name = "social-content-extractor"
 version = "0.1.0"
-description = "CLI tool to extract Instagram post metadata, media, and OCR text"
+description = "CLI tool to extract Instagram and YouTube Shorts metadata, media, and OCR text"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
@@ -11,4 +15,14 @@ dependencies = [
     "requests>=2.32.0",
     "rich>=14.3.3",
     "sarvamai",
+    "yt-dlp>=2025.1.15",
 ]
+
+[project.scripts]
+social-content-extractor = "social_content_extractor.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

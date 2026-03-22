@@ -4,3 +4,4 @@ pytesseract>=0.3.10
 Pillow>=10.0
 requests>=2.32.0
 sarvamai
+yt-dlp>=2025.1.15

@@ -78,7 +78,7 @@ wheels = [
 ]
 
 [[package]]
-name = "insta-content-extractor"
+name = "social-content-extractor"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
