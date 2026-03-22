@@ -18,6 +18,8 @@ import shutil
 import subprocess
 import tempfile
 import time
+import unicodedata
+import zipfile
 from difflib import SequenceMatcher
 from io import BytesIO
 from urllib.parse import urlparse
@@ -45,6 +47,30 @@ REQUEST_HEADERS = {
         "Chrome/133.0.0.0 Safari/537.36"
     )
 }
+
+
+def _read_env_file(env_path: str = ".env") -> dict[str, str]:
+    """Read simple KEY=VALUE pairs from a local .env file."""
+    if not os.path.exists(env_path):
+        return {}
+
+    values: dict[str, str] = {}
+    with open(env_path, "r", encoding="utf-8") as file_obj:
+        for raw_line in file_obj:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            values[key.strip()] = value.strip().strip("'\"")
+    return values
+
+
+def _get_env_value(name: str, env_path: str = ".env") -> str | None:
+    """Get an environment variable, falling back to the project's .env file."""
+    value = os.environ.get(name)
+    if value:
+        return value
+    return _read_env_file(env_path).get(name)
 
 
 def _extract_instagram_url_parts(url: str) -> tuple[str, str]:
@@ -77,9 +103,12 @@ def extract_post(
     output_dir: str = "downloads",
     ocr: bool = False,
     save_json: bool = False,
+    ocr_provider: str = "tesseract",
     ocr_lang: str = DEFAULT_OCR_LANG,
     ocr_psm: int = DEFAULT_OCR_PSM,
     ocr_min_confidence: float = DEFAULT_OCR_MIN_CONFIDENCE,
+    sarvam_model: str = "auto",
+    sarvam_language: str = "en-IN",
 ) -> dict:
     """Extract all content from a public Instagram post."""
     url_kind, shortcode = _extract_instagram_url_parts(url)
@@ -94,16 +123,28 @@ def extract_post(
 
     slides = _build_slides(media_items, download_map)
     ocr_results: list[dict] = []
+    resolved_sarvam_model: str | None = None
     if ocr:
-        _ensure_tesseract_available()
-        if any(slide["type"] == "video" for slide in slides):
-            _ensure_ffmpeg_available()
-        ocr_results = _ocr_images(
-            slides=slides,
-            ocr_lang=ocr_lang,
-            ocr_psm=ocr_psm,
-            ocr_min_confidence=ocr_min_confidence,
-        )
+        if ocr_provider == "sarvam":
+            if any(slide["type"] == "video" for slide in slides):
+                _ensure_ffmpeg_available()
+                _ensure_tesseract_available()
+            ocr_results, resolved_sarvam_model = _ocr_images_with_sarvam(
+                slides=slides,
+                output_dir=post_output_dir,
+                requested_chat_model=sarvam_model,
+                sarvam_language=sarvam_language,
+            )
+        else:
+            _ensure_tesseract_available()
+            if any(slide["type"] == "video" for slide in slides):
+                _ensure_ffmpeg_available()
+            ocr_results = _ocr_images(
+                slides=slides,
+                ocr_lang=ocr_lang,
+                ocr_psm=ocr_psm,
+                ocr_min_confidence=ocr_min_confidence,
+            )
         _attach_ocr_results(slides, ocr_results)
 
     post_data = {
@@ -128,7 +169,10 @@ def extract_post(
         "downloaded_files": [download_map[idx] for idx in sorted(download_map)],
         "ocr_text": ocr_results,
         "ocr_combined_text": _combine_ocr_text(ocr_results),
+        "ocr_provider": ocr_provider if ocr else None,
     }
+    if resolved_sarvam_model:
+        post_data["ocr_cleanup_model"] = resolved_sarvam_model
 
     os.makedirs(post_output_dir, exist_ok=True)
 
@@ -357,6 +401,475 @@ def _ensure_ffmpeg_available() -> None:
         "ffmpeg is required for reel OCR but was not found in PATH. "
         "Install it first, for example with `brew install ffmpeg`."
     )
+
+
+def _create_sarvam_client():
+    """Create a Sarvam client from the local environment."""
+    api_key = _get_env_value("SARVAM_API_KEY")
+    if not api_key:
+        raise RuntimeError("SARVAM_API_KEY is required for Sarvam OCR")
+
+    try:
+        from sarvamai import SarvamAI
+    except ImportError as exc:
+        raise RuntimeError(
+            "Sarvam SDK is not installed. Install it first with `pip install sarvamai`."
+        ) from exc
+
+    return SarvamAI(api_subscription_key=api_key)
+
+
+def _resolve_sarvam_chat_model(requested_model: str, slides: list[dict]) -> str:
+    """Choose the Sarvam cleanup model based on the OCR use case."""
+    if requested_model in {"sarvam-30b", "sarvam-105b"}:
+        return requested_model
+    return "sarvam-30b"
+
+
+def _ocr_images_with_sarvam(
+    slides: list[dict],
+    output_dir: str,
+    requested_chat_model: str,
+    sarvam_language: str,
+) -> tuple[list[dict], str]:
+    """Run OCR with Sarvam Vision and clean the result with a Sarvam chat model."""
+    client = _create_sarvam_client()
+    cleanup_model = _resolve_sarvam_chat_model(requested_chat_model, slides)
+    results: list[dict] = []
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    for slide in slides:
+        if slide["type"] == "video":
+            results.extend(
+                _ocr_video_slide_with_sarvam(
+                    slide=slide,
+                    output_dir=output_dir,
+                    client=client,
+                    sarvam_language=sarvam_language,
+                    cleanup_model=cleanup_model,
+                )
+            )
+            continue
+
+        try:
+            image_path, cleanup_path = _ensure_local_image_path(slide)
+            raw_text = _run_sarvam_vision_on_file(
+                client=client,
+                file_path=image_path,
+                language=sarvam_language,
+                output_dir=output_dir,
+            )
+            cleaned_text = _clean_single_ocr_text_with_sarvam(
+                client=client,
+                cleanup_model=cleanup_model,
+                slide=slide["index"],
+                text=raw_text,
+            )
+            lines = _split_ocr_lines(cleaned_text)
+            results.append(
+                {
+                    "slide": slide["index"],
+                    "text": cleaned_text,
+                    "lines": lines,
+                    "confidence": 0.0,
+                    "word_count": sum(len(line.split()) for line in lines),
+                    "line_count": len(lines),
+                    "variant": "sarvam_vision",
+                    "media_type": slide["type"],
+                    "timestamp": None,
+                    "ocr_source": f"sarvam_vision+{cleanup_model}",
+                }
+            )
+        except Exception as exc:
+            results.append(
+                {
+                    "slide": slide["index"],
+                    "text": f"[OCR failed: {exc}]",
+                    "lines": [],
+                    "confidence": 0.0,
+                    "word_count": 0,
+                    "line_count": 0,
+                    "variant": "failed",
+                    "media_type": slide["type"],
+                    "timestamp": None,
+                    "ocr_source": "failed",
+                }
+            )
+        finally:
+            if cleanup_path:
+                _remove_invalid_cached_file(cleanup_path)
+
+    return results, cleanup_model
+
+
+def _ensure_local_image_path(slide: dict) -> tuple[str, str | None]:
+    """Return a local image path for OCR, downloading a temp copy if necessary."""
+    file_path = slide.get("file_path")
+    if file_path and os.path.exists(file_path):
+        return file_path, None
+
+    image_url = _get_ocr_image_url(slide)
+    response = requests.get(image_url, headers=REQUEST_HEADERS, timeout=20)
+    response.raise_for_status()
+
+    suffix = ".jpg"
+    temp_file = tempfile.NamedTemporaryFile(prefix="sarvam_image_", suffix=suffix, delete=False)
+    try:
+        temp_file.write(response.content)
+    finally:
+        temp_file.close()
+    return temp_file.name, temp_file.name
+
+
+def _run_sarvam_vision_on_file(client, file_path: str, language: str, output_dir: str) -> str:
+    """Extract OCR text from one file with Sarvam Vision Document Intelligence."""
+    job = client.document_intelligence.create_job(
+        language=language,
+        output_format="md",
+    )
+    job.upload_file(file_path)
+    job.start()
+    status = job.wait_until_complete()
+
+    job_state = getattr(status, "job_state", None)
+    if job_state and str(job_state).lower() not in {"completed", "succeeded", "success"}:
+        raise RuntimeError(f"Sarvam Vision job failed with state: {job_state}")
+
+    with tempfile.NamedTemporaryFile(
+        prefix="sarvam_output_",
+        suffix=".zip",
+        dir=output_dir,
+        delete=False,
+    ) as temp_zip:
+        zip_path = temp_zip.name
+
+    try:
+        job.download_output(zip_path)
+        return _read_first_text_file_from_zip(zip_path)
+    finally:
+        _remove_invalid_cached_file(zip_path)
+
+
+def _read_first_text_file_from_zip(zip_path: str) -> str:
+    """Read the first markdown/html payload from a Sarvam output archive."""
+    with zipfile.ZipFile(zip_path) as zip_file:
+        text_files = [
+            name
+            for name in zip_file.namelist()
+            if not name.endswith("/") and name.lower().endswith((".md", ".html", ".txt"))
+        ]
+        for name in sorted(text_files):
+            text = zip_file.read(name).decode("utf-8", errors="replace").strip()
+            if text:
+                return text
+    raise RuntimeError("Sarvam Vision output archive did not contain OCR text")
+
+
+def _clean_single_ocr_text_with_sarvam(client, cleanup_model: str, slide: int, text: str) -> str:
+    """Clean one OCR block without inventing new text."""
+    stripped = _normalize_scene_text_for_output(text)
+    if not stripped:
+        return ""
+
+    response = client.chat.completions(
+        model=cleanup_model,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You clean OCR text from educational slides. Preserve meaning and order. "
+                    "Do not invent missing text. Remove only obvious OCR garbage and normalize formatting. "
+                    "Return only the cleaned slide text as plain text. "
+                    "Do not explain your work. Do not return JSON. Do not include markdown fences."
+                ),
+            },
+            {
+                "role": "user",
+                "content": stripped,
+            },
+        ],
+        temperature=0.0,
+        top_p=1,
+        max_tokens=800,
+    )
+    cleaned = _get_sarvam_message_content(response).strip()
+    cleaned = _strip_markdown_fences(cleaned)
+    if not cleaned or _looks_like_model_reasoning(cleaned):
+        return stripped
+    return _normalize_scene_text_for_output(cleaned)
+
+
+def _ocr_video_slide_with_sarvam(
+    slide: dict,
+    output_dir: str,
+    client,
+    sarvam_language: str,
+    cleanup_model: str,
+) -> list[dict]:
+    """Extract reel scenes locally, then clean them with a Sarvam chat model."""
+    video_path = slide.get("file_path")
+    if not video_path or not os.path.exists(video_path):
+        image_path, cleanup_path = _ensure_local_image_path(slide)
+        try:
+            fallback_text = _clean_single_ocr_text_with_sarvam(
+                client=client,
+                cleanup_model=cleanup_model,
+                slide=slide["index"],
+                text=_run_sarvam_vision_on_file(
+                    client=client,
+                    file_path=image_path,
+                    language=sarvam_language,
+                    output_dir=output_dir,
+                ),
+            )
+        finally:
+            if cleanup_path:
+                _remove_invalid_cached_file(cleanup_path)
+        lines = _split_ocr_lines(fallback_text)
+        return [
+            {
+                "slide": slide["index"],
+                "text": fallback_text,
+                "lines": lines,
+                "confidence": 0.0,
+                "word_count": sum(len(line.split()) for line in lines),
+                "line_count": len(lines),
+                "variant": "sarvam_vision_thumbnail",
+                "media_type": slide["type"],
+                "timestamp": "00:00",
+                "ocr_source": f"sarvam_vision_thumbnail+{cleanup_model}",
+            }
+        ]
+
+    local_scenes = _ocr_video_slide(
+        slide=slide,
+        ocr_lang=DEFAULT_OCR_LANG,
+        ocr_psm=DEFAULT_OCR_PSM,
+        ocr_min_confidence=DEFAULT_OCR_MIN_CONFIDENCE,
+    )
+    scene_candidates = [
+        {
+            "slide": scene["slide"],
+            "media_type": "video",
+            "timestamp": scene.get("timestamp") or "00:00",
+            "timestamp_seconds": _timestamp_to_seconds(scene.get("timestamp") or "00:00"),
+            "text": scene.get("text", ""),
+        }
+        for scene in local_scenes
+        if scene.get("text") and not str(scene.get("text", "")).startswith("[OCR failed")
+    ]
+
+    if not scene_candidates:
+        return local_scenes
+
+    try:
+        cleaned_scenes = _clean_video_scene_records_with_sarvam(
+            client=client,
+            cleanup_model=cleanup_model,
+            scene_candidates=scene_candidates,
+        )
+    except Exception as exc:
+        print(
+            f"  Warning: Sarvam chat cleanup failed for reel slide #{slide['index']}: {exc}. "
+            "Falling back to per-scene cleanup."
+        )
+        cleaned_scenes = _clean_video_scene_records_individually_with_sarvam(
+            client=client,
+            cleanup_model=cleanup_model,
+            scene_candidates=scene_candidates,
+        )
+
+    collapsed = _collapse_scene_candidates_by_second(cleaned_scenes)
+    return _deduplicate_scene_records(collapsed)
+
+
+def _clean_video_scene_records_with_sarvam(client, cleanup_model: str, scene_candidates: list[dict]) -> list[dict]:
+    """Use per-scene Sarvam cleanup for reel OCR records."""
+    return _clean_video_scene_records_individually_with_sarvam(
+        client=client,
+        cleanup_model=cleanup_model,
+        scene_candidates=scene_candidates,
+    )
+
+
+def _build_raw_sarvam_scene_records(scene_candidates: list[dict], cleanup_model: str) -> list[dict]:
+    """Convert raw Sarvam Vision scene text into the standard OCR record shape."""
+    cleaned_scenes = []
+    for scene in scene_candidates:
+        text = _normalize_scene_text_for_output(str(scene.get("text", "")))
+        if not text:
+            continue
+        lines = _split_ocr_lines(text)
+        if not lines:
+            continue
+        cleaned_scenes.append(
+            {
+                "slide": scene["slide"],
+                "media_type": "video",
+                "timestamp": scene["timestamp"],
+                "timestamp_seconds": scene["timestamp_seconds"],
+                "text": "\n".join(lines),
+                "lines": lines,
+                "confidence": 0.0,
+                "word_count": sum(len(line.split()) for line in lines),
+                "line_count": len(lines),
+                "variant": "sarvam_vision_raw",
+                "ocr_source": f"sarvam_vision+{cleanup_model}",
+            }
+        )
+    return cleaned_scenes
+
+
+def _clean_video_scene_records_individually_with_sarvam(
+    client,
+    cleanup_model: str,
+    scene_candidates: list[dict],
+) -> list[dict]:
+    """Fallback cleanup path when the model does not return valid JSON."""
+    cleaned_scenes = []
+    for scene in scene_candidates:
+        try:
+            cleaned_text = _clean_single_ocr_text_with_sarvam(
+                client=client,
+                cleanup_model=cleanup_model,
+                slide=scene["slide"],
+                text=scene["text"],
+            )
+        except Exception:
+            cleaned_text = scene["text"]
+
+        cleaned_text = _normalize_scene_text_for_output(cleaned_text)
+        if not cleaned_text:
+            continue
+
+        if _looks_like_marketing_endcard(cleaned_text):
+            continue
+
+        lines = _split_ocr_lines(cleaned_text)
+        if not lines:
+            continue
+
+        cleaned_scenes.append(
+            {
+                "slide": scene["slide"],
+                "media_type": "video",
+                "timestamp": scene["timestamp"],
+                "timestamp_seconds": scene["timestamp_seconds"],
+                "text": "\n".join(lines),
+                "lines": lines,
+                "confidence": 0.0,
+                "word_count": sum(len(line.split()) for line in lines),
+                "line_count": len(lines),
+                "variant": "sarvam_scene_cleanup",
+                "ocr_source": f"sarvam_scene_cleanup+{cleanup_model}",
+            }
+        )
+    return cleaned_scenes
+
+
+def _timestamp_to_seconds(timestamp: str) -> float:
+    """Convert an MM:SS timestamp string into seconds."""
+    try:
+        minutes_str, seconds_str = timestamp.split(":", 1)
+        return (int(minutes_str) * 60) + int(seconds_str)
+    except (AttributeError, TypeError, ValueError):
+        return 0.0
+
+
+def _split_ocr_lines(text: str) -> list[str]:
+    """Split OCR text into normalized non-empty lines."""
+    return [_normalize_ocr_line(line) for line in text.splitlines() if _normalize_ocr_line(line)]
+
+
+def _strip_markdown_fences(text: str) -> str:
+    """Remove a surrounding markdown code fence if the model wraps its JSON/text."""
+    stripped = text.strip()
+    if not stripped.startswith("```"):
+        return stripped
+    stripped = re.sub(r"^```[a-zA-Z0-9_-]*\n?", "", stripped)
+    stripped = re.sub(r"\n?```$", "", stripped)
+    return stripped.strip()
+
+
+def _get_sarvam_message_content(response) -> str:
+    """Extract the assistant's final content text from a Sarvam chat response."""
+    choices = getattr(response, "choices", None) or []
+    if not choices:
+        return ""
+
+    message = getattr(choices[0], "message", None)
+    if message is None:
+        return ""
+
+    content = getattr(message, "content", None)
+    if isinstance(content, str) and content.strip():
+        return content
+
+    return ""
+
+
+def _looks_like_model_reasoning(text: str) -> bool:
+    """Detect prompt reflection or chain-of-thought style content from a cleanup model."""
+    lowered = text.lower()
+    suspicious_markers = [
+        "analyze the user's request",
+        "core task:",
+        "constraints:",
+        "return only the cleaned text",
+        "input text:",
+        "line-by-line breakdown",
+        "synthesize",
+        "final polish",
+        "```",
+    ]
+    return any(marker in lowered for marker in suspicious_markers)
+
+
+def _normalize_scene_text_for_output(text: str) -> str:
+    """Clean up common OCR artifacts while preserving slide structure."""
+    normalized_lines = []
+    for raw_line in text.splitlines():
+        line = _normalize_ocr_line(_strip_accents(raw_line))
+        if not line:
+            continue
+
+        line = re.sub(r"^[=©¢°>*@/|;,\-\[\]{}_]+", "", line).strip()
+        line = re.sub(r"^(?:e¢|e|o|¢|©|°o|°)\s+(?=[A-Za-z(])", "", line)
+        line = re.sub(r"\s+[°@»|/¢]+$", "", line).strip()
+        line = re.sub(r"^[A-Za-z]?[—_]{2,}$", "", line).strip()
+        line = re.sub(r"^[—@&]+\s*", "", line).strip()
+        line = re.sub(r"(?<=\S)/\s+(?=\S)", "/", line)
+
+        if line in {"", "/ | |", "@ »", "ao No", "e °", "o____", "____"}:
+            continue
+        if re.fullmatch(r"[\W_]{1,8}", line):
+            continue
+
+        normalized_lines.append(line)
+
+    return "\n".join(normalized_lines)
+
+
+def _strip_accents(text: str) -> str:
+    """Normalize accented OCR characters into their ASCII equivalents."""
+    normalized = unicodedata.normalize("NFKD", text)
+    return "".join(char for char in normalized if not unicodedata.combining(char))
+
+
+def _looks_like_marketing_endcard(text: str) -> bool:
+    """Drop noisy promotional end-card OCR that is usually not the main content."""
+    lowered = text.lower()
+    endcard_markers = [
+        "complete tutorial",
+        "full course",
+        "docker compose",
+        "github actions",
+        "eslint",
+        "prettier",
+    ]
+    marker_count = sum(marker in lowered for marker in endcard_markers)
+    return marker_count >= 3 and len(lowered.splitlines()) > 8
 
 
 def _ocr_images(
