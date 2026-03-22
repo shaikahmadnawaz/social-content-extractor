@@ -118,6 +118,109 @@ def _output_collection_for_kind(kind: str) -> str:
     return "reels" if kind == "reel" else "posts"
 
 
+def _select_primary_content(caption: str, ocr_text: str) -> dict[str, str]:
+    """Choose the most useful primary text while keeping caption and OCR separate."""
+    caption_clean = caption.strip()
+    ocr_clean = ocr_text.strip()
+
+    if not caption_clean and not ocr_clean:
+        return {
+            "content_strategy": "none",
+            "primary_source": "none",
+            "primary_text": "",
+        }
+    if caption_clean and not ocr_clean:
+        return {
+            "content_strategy": "caption_only",
+            "primary_source": "caption",
+            "primary_text": caption_clean,
+        }
+    if ocr_clean and not caption_clean:
+        return {
+            "content_strategy": "ocr_only",
+            "primary_source": "ocr",
+            "primary_text": ocr_clean,
+        }
+
+    caption_word_count = _count_meaningful_words(caption_clean)
+    ocr_word_count = _count_meaningful_words(ocr_clean)
+    caption_substantive = caption_word_count >= 12
+    ocr_substantive = ocr_word_count >= 12
+    caption_promo_markers = _promotional_marker_count(caption_clean)
+
+    if caption_substantive and not ocr_substantive:
+        if caption_promo_markers >= 2 and ocr_word_count >= 6:
+            return {
+                "content_strategy": "caption_plus_ocr",
+                "primary_source": "ocr",
+                "primary_text": ocr_clean,
+            }
+        return {
+            "content_strategy": "media_representational",
+            "primary_source": "caption",
+            "primary_text": caption_clean,
+        }
+    if ocr_substantive and not caption_substantive:
+        return {
+            "content_strategy": "ocr_only",
+            "primary_source": "ocr",
+            "primary_text": ocr_clean,
+        }
+
+    if caption_substantive and ocr_substantive:
+        primary_source = _choose_primary_source(caption_clean, ocr_clean)
+        return {
+            "content_strategy": "caption_plus_ocr",
+            "primary_source": primary_source,
+            "primary_text": caption_clean if primary_source == "caption" else ocr_clean,
+        }
+
+    primary_source = "caption" if caption_word_count >= ocr_word_count else "ocr"
+    return {
+        "content_strategy": "caption_plus_ocr",
+        "primary_source": primary_source,
+        "primary_text": caption_clean if primary_source == "caption" else ocr_clean,
+    }
+
+
+def _count_meaningful_words(text: str) -> int:
+    """Count readable words for simple content-source heuristics."""
+    return len(re.findall(r"[A-Za-z0-9]{2,}", text))
+
+
+def _choose_primary_source(caption: str, ocr_text: str) -> str:
+    """Prefer the richer, less promotional source when both caption and OCR matter."""
+    caption_score = _content_source_score(caption)
+    ocr_score = _content_source_score(ocr_text)
+    return "caption" if caption_score >= ocr_score else "ocr"
+
+
+def _content_source_score(text: str) -> int:
+    """Score a text source by substance minus obvious promotional language."""
+    word_count = _count_meaningful_words(text)
+    promo_penalty = 8 * _promotional_marker_count(text)
+    return word_count - promo_penalty
+
+
+def _promotional_marker_count(text: str) -> int:
+    """Detect generic CTA/promotional language often found in Instagram captions."""
+    lowered = text.lower()
+    markers = [
+        "follow",
+        "like",
+        "share",
+        "save this",
+        "save this post",
+        "comment",
+        "dm ",
+        "link in bio",
+        "for more",
+        "course",
+        "subscribe",
+    ]
+    return sum(marker in lowered for marker in markers)
+
+
 def extract_post(
     url: str,
     download_media: bool = True,
@@ -180,6 +283,9 @@ def extract_post(
             )
         _attach_ocr_results(slides, ocr_results)
 
+    ocr_combined_text = _combine_ocr_text(ocr_results)
+    content_selection = _select_primary_content(post.caption or "", ocr_combined_text)
+
     post_data = {
         "shortcode": shortcode,
         "url": _build_canonical_instagram_url(url_kind, shortcode),
@@ -201,8 +307,11 @@ def extract_post(
         "slides": slides,
         "downloaded_files": [download_map[idx] for idx in sorted(download_map)],
         "ocr_text": ocr_results,
-        "ocr_combined_text": _combine_ocr_text(ocr_results),
+        "ocr_combined_text": ocr_combined_text,
         "ocr_provider": ocr_provider if ocr else None,
+        "content_strategy": content_selection["content_strategy"],
+        "primary_source": content_selection["primary_source"],
+        "primary_text": content_selection["primary_text"],
     }
     if resolved_sarvam_model:
         post_data["ocr_cleanup_model"] = resolved_sarvam_model

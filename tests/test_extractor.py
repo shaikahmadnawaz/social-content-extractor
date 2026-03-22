@@ -30,6 +30,7 @@ from extractor import (
     _ocr_images_with_sarvam,
     _ocr_images_with_sarvam_vision,
     _ocr_video_slide,
+    _select_primary_content,
     _resolve_sarvam_chat_model,
     _should_keep_video_scene,
     extract_post,
@@ -79,6 +80,42 @@ class ExtractorTests(unittest.TestCase):
                 file_obj.write('SARVAM_API_KEY="abc123"\n')
 
             self.assertEqual(_get_env_value("SARVAM_API_KEY", env_path=env_path), "abc123")
+
+    def test_select_primary_content_prefers_caption_for_representational_media(self) -> None:
+        result = _select_primary_content(
+            caption=(
+                "This post is just a visual teaser. The real explanation is here in the caption with "
+                "clear steps, context, and the actual takeaways you should follow."
+            ),
+            ocr_text="Nice graphic",
+        )
+        self.assertEqual(result["content_strategy"], "media_representational")
+        self.assertEqual(result["primary_source"], "caption")
+
+    def test_select_primary_content_prefers_ocr_when_caption_is_promotional(self) -> None:
+        result = _select_primary_content(
+            caption=(
+                "Follow for more tech content. Save this post, share it, and comment READY if you want "
+                "the full roadmap and course links."
+            ),
+            ocr_text=(
+                "DevOps Roadmap\n"
+                "Linux, Networking, Bash, Python, Git, Docker, Kubernetes, Terraform, Monitoring"
+            ),
+        )
+        self.assertEqual(result["content_strategy"], "caption_plus_ocr")
+        self.assertEqual(result["primary_source"], "ocr")
+
+    def test_select_primary_content_marks_ocr_only_when_ocr_is_substantive(self) -> None:
+        result = _select_primary_content(
+            caption="Great post",
+            ocr_text=(
+                "Assignment 1 Terraform Modules Assignment 2 Secure VPC Assignment 3 Blue Green Deployment "
+                "Assignment 4 Drift Detection Assignment 5 Disaster Recovery"
+            ),
+        )
+        self.assertEqual(result["content_strategy"], "ocr_only")
+        self.assertEqual(result["primary_source"], "ocr")
 
     def test_get_sarvam_message_content_ignores_reasoning_content(self) -> None:
         response = SimpleNamespace(
@@ -676,6 +713,9 @@ class ExtractorTests(unittest.TestCase):
             self.assertTrue(data["json_file"].endswith("content/DVVXez5Ctc3.local.json"))
             self.assertTrue(os.path.exists(data["ocr_text_file"]))
             self.assertTrue(os.path.exists(data["json_file"]))
+            self.assertIn("content_strategy", data)
+            self.assertIn("primary_source", data)
+            self.assertIn("primary_text", data)
 
     @patch("extractor._fetch_post")
     @patch("extractor._create_loader")
