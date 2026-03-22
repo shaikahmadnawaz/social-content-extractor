@@ -7,19 +7,22 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from extractor import (
+from social_content_extractor.extractor import (
     _build_canonical_instagram_url,
+    _build_canonical_youtube_url,
     _build_content_output_dir,
     _build_media_output_dir,
     _build_output_artifact_stem,
+    _build_post_output_dir,
+    _build_youtube_caption,
     _clean_video_scene_records_with_sarvam,
     _deduplicate_scene_records,
     _ensure_ffmpeg_available,
     _extract_instagram_url_parts,
+    _extract_youtube_url_parts,
     _format_seconds_timestamp,
     _get_sarvam_message_content,
     _get_env_value,
-    _build_post_output_dir,
     _combine_ocr_text,
     _get_ocr_image_url,
     _is_valid_cached_media,
@@ -38,7 +41,7 @@ from extractor import (
 )
 
 
-class ExtractorTests(unittest.TestCase):
+class ExtractorAPITests(unittest.TestCase):
     def test_extract_shortcode_accepts_querystring(self) -> None:
         url = "https://www.instagram.com/p/DVVXez5Ctc3/?igsh=ZWVkeGUweHI4bWI0"
         self.assertEqual(extract_shortcode(url), "DVVXez5Ctc3")
@@ -53,10 +56,26 @@ class ExtractorTests(unittest.TestCase):
             ("reel", "DTTBJSgE6pP"),
         )
 
+    def test_extract_shortcode_accepts_youtube_shorts_url(self) -> None:
+        url = "https://youtube.com/shorts/Fh7SAaWZ-cQ?si=8oIZcu13Qc-Ptwv7"
+        self.assertEqual(extract_shortcode(url), "Fh7SAaWZ-cQ")
+
+    def test_extract_youtube_url_parts_accepts_shorts_url(self) -> None:
+        self.assertEqual(
+            _extract_youtube_url_parts("https://www.youtube.com/shorts/Fh7SAaWZ-cQ"),
+            ("shorts", "Fh7SAaWZ-cQ"),
+        )
+
     def test_build_canonical_instagram_url_uses_media_kind(self) -> None:
         self.assertEqual(
             _build_canonical_instagram_url("tv", "ABC123"),
             "https://www.instagram.com/tv/ABC123/",
+        )
+
+    def test_build_canonical_youtube_url_uses_video_id(self) -> None:
+        self.assertEqual(
+            _build_canonical_youtube_url("Fh7SAaWZ-cQ"),
+            "https://www.youtube.com/shorts/Fh7SAaWZ-cQ",
         )
 
     def test_build_output_artifact_stem_uses_mode_suffixes(self) -> None:
@@ -69,9 +88,26 @@ class ExtractorTests(unittest.TestCase):
         )
 
     def test_build_media_and_content_output_dirs_use_post_subfolders(self) -> None:
-        post_dir = "/tmp/downloads/posts/ABC123"
-        self.assertEqual(_build_media_output_dir(post_dir), "/tmp/downloads/posts/ABC123/media")
-        self.assertEqual(_build_content_output_dir(post_dir), "/tmp/downloads/posts/ABC123/content")
+        post_dir = "/tmp/downloads/instagram/posts/ABC123"
+        self.assertEqual(_build_media_output_dir(post_dir), "/tmp/downloads/instagram/posts/ABC123/media")
+        self.assertEqual(_build_content_output_dir(post_dir), "/tmp/downloads/instagram/posts/ABC123/content")
+
+    def test_build_post_output_dir_uses_shorts_bucket_for_youtube(self) -> None:
+        self.assertEqual(
+            _build_post_output_dir("/tmp/downloads", "shorts", "Fh7SAaWZ-cQ", source="youtube"),
+            "/tmp/downloads/youtube/shorts/Fh7SAaWZ-cQ",
+        )
+
+    def test_build_youtube_caption_combines_title_and_description(self) -> None:
+        self.assertEqual(
+            _build_youtube_caption(
+                {
+                    "title": "How to learn DevOps",
+                    "description": "Start with Linux and networking.",
+                }
+            ),
+            "How to learn DevOps\n\nStart with Linux and networking.",
+        )
 
     def test_get_env_value_reads_from_dotenv_file(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -207,10 +243,10 @@ class ExtractorTests(unittest.TestCase):
             "sarvam-30b",
         )
 
-    @patch("extractor._clean_single_ocr_text_with_sarvam", return_value="clean text")
-    @patch("extractor._run_best_ocr")
-    @patch("extractor._load_ocr_image")
-    @patch("extractor._create_sarvam_client")
+    @patch("social_content_extractor.extractor.core._clean_single_ocr_text_with_sarvam", return_value="clean text")
+    @patch("social_content_extractor.extractor.core._run_best_ocr")
+    @patch("social_content_extractor.extractor.core._load_ocr_image")
+    @patch("social_content_extractor.extractor.core._create_sarvam_client")
     def test_ocr_images_with_sarvam_uses_local_ocr_for_images(
         self,
         _mock_client,
@@ -242,10 +278,43 @@ class ExtractorTests(unittest.TestCase):
         self.assertEqual(results[0]["variant"], "enhanced_sarvam_cleanup")
         self.assertEqual(results[0]["ocr_source"], "downloaded_image+sarvam-30b")
 
-    @patch("extractor._clean_single_ocr_text_with_sarvam", return_value="clean vision text")
-    @patch("extractor._run_sarvam_vision_on_file", return_value="raw vision text")
-    @patch("extractor._ensure_local_image_path")
-    @patch("extractor._create_sarvam_client")
+    @patch("social_content_extractor.extractor.core._fetch_youtube_video_info")
+    @patch("social_content_extractor.extractor.core._download_youtube_media")
+    def test_extract_post_supports_youtube_shorts(self, mock_download, mock_info) -> None:
+        mock_info.return_value = {
+            "id": "Fh7SAaWZ-cQ",
+            "title": "YouTube Short Title",
+            "description": "Build in public #devops @cloudteam",
+            "channel_id": "channel-123",
+            "uploader_id": "@creator",
+            "thumbnail": "https://img.youtube.com/example.jpg",
+            "timestamp": 1772323200,
+            "like_count": 42,
+            "comment_count": 7,
+            "webpage_url": "https://www.youtube.com/shorts/Fh7SAaWZ-cQ",
+        }
+        mock_download.return_value = {1: "/tmp/Fh7SAaWZ-cQ_1.mp4"}
+
+        data = extract_post(
+            "https://youtube.com/shorts/Fh7SAaWZ-cQ?si=8oIZcu13Qc-Ptwv7",
+            download_media=True,
+            ocr=False,
+            save_json=False,
+        )
+
+        self.assertEqual(data["platform"], "youtube")
+        self.assertEqual(data["shortcode"], "Fh7SAaWZ-cQ")
+        self.assertEqual(data["url"], "https://www.youtube.com/shorts/Fh7SAaWZ-cQ")
+        self.assertEqual(data["title"], "YouTube Short Title")
+        self.assertEqual(data["owner"]["username"], "creator")
+        self.assertEqual(data["hashtags"], ["devops"])
+        self.assertEqual(data["mentions"], ["cloudteam"])
+        self.assertEqual(data["downloaded_files"], ["/tmp/Fh7SAaWZ-cQ_1.mp4"])
+
+    @patch("social_content_extractor.extractor.core._clean_single_ocr_text_with_sarvam", return_value="clean vision text")
+    @patch("social_content_extractor.extractor.core._run_sarvam_vision_on_file", return_value="raw vision text")
+    @patch("social_content_extractor.extractor.core._ensure_local_image_path")
+    @patch("social_content_extractor.extractor.core._create_sarvam_client")
     def test_ocr_images_with_sarvam_vision_uses_vision_for_images(
         self,
         _mock_client,
@@ -307,11 +376,11 @@ class ExtractorTests(unittest.TestCase):
     def test_build_post_output_dir_nests_shortcode_under_base_dir(self) -> None:
         self.assertEqual(
             _build_post_output_dir("downloads", "p", "DVVXez5Ctc3"),
-            "downloads/posts/DVVXez5Ctc3",
+            "downloads/instagram/posts/DVVXez5Ctc3",
         )
         self.assertEqual(
             _build_post_output_dir("downloads", "reel", "DTTBJSgE6pP"),
-            "downloads/reels/DTTBJSgE6pP",
+            "downloads/instagram/reels/DTTBJSgE6pP",
         )
 
     def test_get_ocr_image_url_uses_video_thumbnail(self) -> None:
@@ -346,7 +415,7 @@ class ExtractorTests(unittest.TestCase):
                 file_obj.write(b"tiny")
             self.assertFalse(_is_valid_cached_media({"type": "video"}, video_path))
 
-    @patch("extractor.shutil.which", return_value=None)
+    @patch("social_content_extractor.extractor.core.shutil.which", return_value=None)
     def test_is_valid_cached_media_rejects_non_mp4_video_cache(self, _) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             video_path = os.path.join(temp_dir, "clip.mp4")
@@ -354,7 +423,7 @@ class ExtractorTests(unittest.TestCase):
                 file_obj.write(b"<html>rate limited</html>" * 80)
             self.assertFalse(_is_valid_cached_media({"type": "video"}, video_path))
 
-    @patch("extractor.shutil.which", return_value=None)
+    @patch("social_content_extractor.extractor.sources.shutil.which", return_value=None)
     def test_is_valid_cached_media_accepts_mp4_signature_when_ffprobe_unavailable(self, _) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             video_path = os.path.join(temp_dir, "clip.mp4")
@@ -362,8 +431,8 @@ class ExtractorTests(unittest.TestCase):
                 file_obj.write(b"\x00\x00\x00\x18ftypisom" + (b"\x00" * 2048))
             self.assertTrue(_is_valid_cached_media({"type": "video"}, video_path))
 
-    @patch("extractor.subprocess.run")
-    @patch("extractor.shutil.which", return_value="/usr/bin/ffprobe")
+    @patch("social_content_extractor.extractor.sources.subprocess.run")
+    @patch("social_content_extractor.extractor.sources.shutil.which", return_value="/usr/bin/ffprobe")
     def test_is_valid_cached_media_uses_ffprobe_for_video_validation(self, _, mock_run) -> None:
         mock_run.return_value = SimpleNamespace(
             stdout='{"format":{"duration":"9.7"},"streams":[{"codec_type":"video"}]}'
@@ -408,7 +477,54 @@ class ExtractorTests(unittest.TestCase):
         )
         self.assertEqual([scene["timestamp"] for scene in deduped], ["00:00", "00:04"])
 
-    @patch("extractor.shutil.which", return_value=None)
+    def test_deduplicate_scene_records_collapses_static_video_frames_with_ocr_drift(self) -> None:
+        deduped = _deduplicate_scene_records(
+            [
+                {
+                    "slide": 1,
+                    "media_type": "video",
+                    "timestamp": "00:00",
+                    "timestamp_seconds": 0.0,
+                    "text": (
+                        "Python Programming Language\n"
+                        "Linux Operating System\n"
+                        "AWS Cloud Providers\n"
+                        "Git Version Control System\n"
+                        "Docker Containers\n"
+                        "Jenkins GitLab GitHub Action\n"
+                        "Terraform Ansible Kubernetes\n"
+                        "Prometheus Grafana Infra Monitoring"
+                    ),
+                },
+                {
+                    "slide": 1,
+                    "media_type": "video",
+                    "timestamp": "00:01",
+                    "timestamp_seconds": 1.0,
+                    "text": (
+                        "Python Programming Lanquage\n"
+                        "Linux Operating System\n"
+                        "AWS Cloud Providers\n"
+                        "Git Version Codtrol System\n"
+                        "Docker Containers\n"
+                        "Jenkins Gitlab GitHub Action\n"
+                        "Terraform Ansible Kubemetes\n"
+                        "Prometheus Grafana Infra Monitoring"
+                    ),
+                },
+                {
+                    "slide": 1,
+                    "media_type": "video",
+                    "timestamp": "00:05",
+                    "timestamp_seconds": 5.0,
+                    "text": "Different closing scene with subscribe call to action",
+                },
+            ]
+        )
+
+        self.assertEqual([scene["timestamp"] for scene in deduped], ["00:00", "00:05"])
+
+    @patch("social_content_extractor.extractor.core.shutil.which", return_value=None)
     def test_ensure_ffmpeg_available_raises_clear_error_when_missing(self, _) -> None:
         with self.assertRaises(RuntimeError) as ctx:
             _ensure_ffmpeg_available()
@@ -427,9 +543,9 @@ class ExtractorTests(unittest.TestCase):
                 "thumbnail_url": "https://cdn.example/thumb.jpg",
             }
 
-            with patch("extractor._extract_video_frames_for_ocr", side_effect=RuntimeError("boom")):
+            with patch("social_content_extractor.extractor.core._extract_video_frames_for_ocr", side_effect=RuntimeError("boom")):
                 with patch(
-                    "extractor._run_thumbnail_ocr",
+                    "social_content_extractor.extractor.core._run_thumbnail_ocr",
                     return_value={
                         "slide": 1,
                         "media_type": "video",
@@ -483,9 +599,9 @@ class ExtractorTests(unittest.TestCase):
             )
         )
 
-    @patch("extractor._fetch_post")
-    @patch("extractor._create_loader")
-    @patch("extractor._download_media")
+    @patch("social_content_extractor.extractor.core._fetch_post")
+    @patch("social_content_extractor.extractor.core._create_loader")
+    @patch("social_content_extractor.extractor.core._download_media")
     def test_extract_post_places_downloaded_media_in_media_subfolder(
         self,
         mock_download_media,
@@ -508,7 +624,7 @@ class ExtractorTests(unittest.TestCase):
             url="https://cdn.example/image.jpg",
         )
         mock_download_media.return_value = {
-            1: "/tmp/downloads/posts/DVVXez5Ctc3/media/DVVXez5Ctc3_1.jpg",
+            1: "/tmp/downloads/instagram/posts/DVVXez5Ctc3/media/DVVXez5Ctc3_1.jpg",
         }
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -521,8 +637,8 @@ class ExtractorTests(unittest.TestCase):
 
         self.assertTrue(data["downloaded_files"][0].endswith("posts/DVVXez5Ctc3/media/DVVXez5Ctc3_1.jpg"))
 
-    @patch("extractor._fetch_post")
-    @patch("extractor._create_loader")
+    @patch("social_content_extractor.extractor.core._fetch_post")
+    @patch("social_content_extractor.extractor.core._create_loader")
     def test_extract_post_preserves_reel_url_kind(self, _, mock_fetch_post) -> None:
         mock_fetch_post.return_value = SimpleNamespace(
             typename="GraphVideo",
@@ -550,9 +666,9 @@ class ExtractorTests(unittest.TestCase):
 
         self.assertEqual(data["url"], "https://www.instagram.com/reel/DTTBJSgE6pP/")
 
-    @patch("extractor._fetch_post")
-    @patch("extractor._create_loader")
-    @patch("extractor._ocr_images_with_sarvam")
+    @patch("social_content_extractor.extractor.core._fetch_post")
+    @patch("social_content_extractor.extractor.core._create_loader")
+    @patch("social_content_extractor.extractor.core._ocr_images_with_sarvam")
     def test_extract_post_uses_sarvam_provider_when_requested(
         self,
         mock_sarvam_ocr,
@@ -605,9 +721,9 @@ class ExtractorTests(unittest.TestCase):
         self.assertEqual(data["ocr_cleanup_model"], "sarvam-30b")
         mock_sarvam_ocr.assert_called_once()
 
-    @patch("extractor._fetch_post")
-    @patch("extractor._create_loader")
-    @patch("extractor._ocr_images_with_sarvam_vision")
+    @patch("social_content_extractor.extractor.core._fetch_post")
+    @patch("social_content_extractor.extractor.core._create_loader")
+    @patch("social_content_extractor.extractor.core._ocr_images_with_sarvam_vision")
     def test_extract_post_uses_sarvam_vision_provider_when_requested(
         self,
         mock_sarvam_vision_ocr,
@@ -660,9 +776,9 @@ class ExtractorTests(unittest.TestCase):
         self.assertEqual(data["ocr_cleanup_model"], "sarvam-30b")
         mock_sarvam_vision_ocr.assert_called_once()
 
-    @patch("extractor._fetch_post")
-    @patch("extractor._create_loader")
-    @patch("extractor._ocr_images")
+    @patch("social_content_extractor.extractor.core._fetch_post")
+    @patch("social_content_extractor.extractor.core._create_loader")
+    @patch("social_content_extractor.extractor.core._ocr_images")
     def test_extract_post_saves_local_mode_ocr_and_json_with_mode_suffix(
         self,
         mock_local_ocr,
@@ -717,9 +833,9 @@ class ExtractorTests(unittest.TestCase):
             self.assertIn("primary_source", data)
             self.assertIn("primary_text", data)
 
-    @patch("extractor._fetch_post")
-    @patch("extractor._create_loader")
-    @patch("extractor._ocr_images_with_sarvam")
+    @patch("social_content_extractor.extractor.core._fetch_post")
+    @patch("social_content_extractor.extractor.core._create_loader")
+    @patch("social_content_extractor.extractor.core._ocr_images_with_sarvam")
     def test_extract_post_saves_sarvam_mode_ocr_and_json_with_mode_suffix(
         self,
         mock_sarvam_ocr,
@@ -774,9 +890,9 @@ class ExtractorTests(unittest.TestCase):
             self.assertTrue(os.path.exists(data["ocr_text_file"]))
             self.assertTrue(os.path.exists(data["json_file"]))
 
-    @patch("extractor._fetch_post")
-    @patch("extractor._create_loader")
-    @patch("extractor._ocr_images_with_sarvam_vision")
+    @patch("social_content_extractor.extractor.core._fetch_post")
+    @patch("social_content_extractor.extractor.core._create_loader")
+    @patch("social_content_extractor.extractor.core._ocr_images_with_sarvam_vision")
     def test_extract_post_saves_sarvam_vision_mode_ocr_and_json_with_mode_suffix(
         self,
         mock_sarvam_vision_ocr,
@@ -831,8 +947,8 @@ class ExtractorTests(unittest.TestCase):
             self.assertTrue(os.path.exists(data["ocr_text_file"]))
             self.assertTrue(os.path.exists(data["json_file"]))
 
-    @patch("extractor._fetch_post")
-    @patch("extractor._create_loader")
+    @patch("social_content_extractor.extractor.core._fetch_post")
+    @patch("social_content_extractor.extractor.core._create_loader")
     def test_extract_post_saves_json_without_ocr_in_content_subfolder(
         self,
         _,

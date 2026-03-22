@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-import main
+from social_content_extractor import cli as main
 
 
 SAMPLE_DATA = {
@@ -22,8 +22,15 @@ SAMPLE_DATA = {
     "ocr_text": [],
 }
 
+YOUTUBE_SAMPLE_DATA = {
+    **SAMPLE_DATA,
+    "platform": "youtube",
+    "url": "https://www.youtube.com/shorts/Fh7SAaWZ-cQ",
+    "title": "Short title",
+}
 
-class MainTests(unittest.TestCase):
+
+class CLITests(unittest.TestCase):
     @patch.object(main.console, "print")
     def test_display_results_hides_accessibility_caption_by_default(self, mock_print) -> None:
         main.display_results(SAMPLE_DATA)
@@ -45,6 +52,18 @@ class MainTests(unittest.TestCase):
             if call.args and hasattr(call.args[0], "title")
         ]
         self.assertIn("Accessibility Caption", printed_titles)
+
+    @patch.object(main.console, "print")
+    def test_display_results_uses_social_header_for_shorts(self, mock_print) -> None:
+        main.display_results(YOUTUBE_SAMPLE_DATA)
+
+        header_panels = [
+            call.args[0]
+            for call in mock_print.call_args_list
+            if call.args and getattr(call.args[0], "renderable", None)
+        ]
+        self.assertTrue(header_panels)
+        self.assertIn("Social Content Extractor", str(header_panels[0].renderable))
 
 
 if __name__ == "__main__":
