@@ -1102,6 +1102,9 @@ def _normalize_scene_text_for_output(text: str) -> str:
         line = _normalize_ocr_line(_strip_accents(raw_line))
         if not line:
             continue
+
+        line = re.sub(r"^#{2,6}\s*", "", line).strip()
+
         if _looks_like_embedded_image_markdown(line):
             continue
         if _looks_like_image_description_line(line):
@@ -1135,6 +1138,11 @@ def _looks_like_image_description_line(line: str) -> bool:
     lowered = line.lower()
     prefixes = [
         "the image is ",
+        "the image displays ",
+        "the image features ",
+        "the image shows ",
+        "the image depicts ",
+        "the image contains ",
         "this image ",
         "the figure shows ",
         "this figure ",
@@ -1150,6 +1158,7 @@ def _looks_like_image_description_line(line: str) -> bool:
 
     description_markers = [
         "background is ",
+        "background of the image",
         "axes, grid lines",
         "legend, or numerical data",
         "uniform dark gray",
