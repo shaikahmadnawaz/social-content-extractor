@@ -113,6 +113,11 @@ def _build_output_artifact_stem(shortcode: str, ocr_provider: str | None) -> str
     return f"{shortcode}.{suffix}"
 
 
+def _output_collection_for_kind(kind: str) -> str:
+    """Map Instagram URL kinds to top-level output buckets."""
+    return "reels" if kind == "reel" else "posts"
+
+
 def extract_post(
     url: str,
     download_media: bool = True,
@@ -128,7 +133,7 @@ def extract_post(
 ) -> dict:
     """Extract all content from a public Instagram post."""
     url_kind, shortcode = _extract_instagram_url_parts(url)
-    post_output_dir = _build_post_output_dir(output_dir, shortcode)
+    post_output_dir = _build_post_output_dir(output_dir, url_kind, shortcode)
     media_output_dir = _build_media_output_dir(post_output_dir)
     content_output_dir = _build_content_output_dir(post_output_dir)
     loader = _create_loader()
@@ -265,9 +270,9 @@ def _get_post_type(post) -> str:
     return "video" if post.is_video else "image"
 
 
-def _build_post_output_dir(base_output_dir: str, shortcode: str) -> str:
+def _build_post_output_dir(base_output_dir: str, kind: str, shortcode: str) -> str:
     """Return the dedicated output directory for one Instagram post."""
-    return os.path.join(base_output_dir, shortcode)
+    return os.path.join(base_output_dir, _output_collection_for_kind(kind), shortcode)
 
 
 def _build_media_output_dir(post_output_dir: str) -> str:
