@@ -557,6 +557,17 @@ Behavior:
 - useful for some posts and carousels
 - currently less reliable for reels because provider-generated image-description text can still leak through
 
+### Sarvam Pricing Note
+
+Based on the current pricing shared for this project:
+
+| Service | Usage in this tool | Pricing |
+| --- | --- | --- |
+| Sarvam 30B | chat cleanup / sentence formatting | Free |
+| Sarvam Vision | image OCR / vision extraction | `₹1.5` per page |
+
+Practical takeaway:
+
 ## Setup
 
 Install Python dependencies:
