@@ -68,9 +68,9 @@ class ExtractorTests(unittest.TestCase):
         )
 
     def test_build_media_and_content_output_dirs_use_post_subfolders(self) -> None:
-        post_dir = "/tmp/downloads/ABC123"
-        self.assertEqual(_build_media_output_dir(post_dir), "/tmp/downloads/ABC123/media")
-        self.assertEqual(_build_content_output_dir(post_dir), "/tmp/downloads/ABC123/content")
+        post_dir = "/tmp/downloads/posts/ABC123"
+        self.assertEqual(_build_media_output_dir(post_dir), "/tmp/downloads/posts/ABC123/media")
+        self.assertEqual(_build_content_output_dir(post_dir), "/tmp/downloads/posts/ABC123/content")
 
     def test_get_env_value_reads_from_dotenv_file(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -269,8 +269,12 @@ class ExtractorTests(unittest.TestCase):
 
     def test_build_post_output_dir_nests_shortcode_under_base_dir(self) -> None:
         self.assertEqual(
-            _build_post_output_dir("downloads", "DVVXez5Ctc3"),
-            "downloads/DVVXez5Ctc3",
+            _build_post_output_dir("downloads", "p", "DVVXez5Ctc3"),
+            "downloads/posts/DVVXez5Ctc3",
+        )
+        self.assertEqual(
+            _build_post_output_dir("downloads", "reel", "DTTBJSgE6pP"),
+            "downloads/reels/DTTBJSgE6pP",
         )
 
     def test_get_ocr_image_url_uses_video_thumbnail(self) -> None:
@@ -467,7 +471,7 @@ class ExtractorTests(unittest.TestCase):
             url="https://cdn.example/image.jpg",
         )
         mock_download_media.return_value = {
-            1: "/tmp/downloads/DVVXez5Ctc3/media/DVVXez5Ctc3_1.jpg",
+            1: "/tmp/downloads/posts/DVVXez5Ctc3/media/DVVXez5Ctc3_1.jpg",
         }
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -478,7 +482,7 @@ class ExtractorTests(unittest.TestCase):
                 ocr=False,
             )
 
-        self.assertTrue(data["downloaded_files"][0].endswith("media/DVVXez5Ctc3_1.jpg"))
+        self.assertTrue(data["downloaded_files"][0].endswith("posts/DVVXez5Ctc3/media/DVVXez5Ctc3_1.jpg"))
 
     @patch("extractor._fetch_post")
     @patch("extractor._create_loader")
